@@ -1,0 +1,36 @@
+# Exclude large or sensitive host artefacts from the Docker build context.
+# Each rule keeps the image lean and prevents secrets from leaking.
+
+# Dependencies — installed inside the image via `pnpm install --frozen-lockfile`
+node_modules
+
+# Compiled output — rebuilt inside the image
+dist
+
+# Version control metadata — never needed at runtime
+.git
+.gitignore
+
+# Environment / secrets — injected at runtime via Docker Compose or Kubernetes
+.env
+.env.*
+*.env
+
+# Test coverage reports
+coverage
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Test source files — not shipped in the production image
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
+
+# Local editor / IDE configuration
+.vscode
+.idea
+
+# Turbo cache
+.turbo
