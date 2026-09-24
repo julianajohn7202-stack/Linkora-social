@@ -309,3 +309,115 @@ Every protected endpoint is JSON-only today, so this is latent rather than live.
 live vulnerability the moment a protected route accepts another content type. **Any new
 protected endpoint must be JSON**, or the raw-body capture in
 `services/indexer/src/middleware/rawBody.ts` must be widened to cover its content type first.
+
+---
+
+## 10. Contract Error Code Reference
+
+All on-chain errors are returned as Soroban `contracterror` variants. The
+source of truth is `packages/contracts/contracts/linkora-contracts/src/errors.rs`.
+
+### Storage / Rent Errors
+
+| Code | Name      | Description                   | Common Cause                                                                               |
+| ---- | --------- | ----------------------------- | ------------------------------------------------------------------------------------------ |
+| `1`  | `Expired` | Storage entry TTL has elapsed | Accessing a follow, profile, or post whose ledger-entry TTL has expired and was not bumped |
+
+### Contract Domain Errors
+
+| Code  | Name                        | Description                                                        | Common Cause                                                                      |
+| ----- | --------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `100` | `AlreadyInitialized`        | Contract has already been initialised                              | Calling `initialize` a second time                                                |
+| `101` | `NotInitialized`            | Contract has not been initialised yet                              | Calling any function before `initialize`                                          |
+| `102` | `UsernameTaken`             | The requested username is already registered                       | `set_profile` with a username already claimed by another address                  |
+| `103` | `UsernameTooShort`          | Username is below the minimum length                               | Submitting a username shorter than the minimum allowed characters                 |
+| `104` | `UsernameTooLong`           | Username exceeds the maximum length                                | Submitting a username longer than the maximum allowed characters                  |
+| `105` | `ContentTooLong`            | Post or bio content exceeds the maximum length                     | Submitting a post body or profile bio that exceeds the character limit            |
+| `106` | `ContentEmpty`              | Post or bio content is empty                                       | Submitting a post with no body                                                    |
+| `107` | `Blocked`                   | The caller has been blocked by the target user                     | Following, tipping, or interacting with a user who has blocked you                |
+| `108` | `NotBlocked`                | Attempting to unblock a user who was never blocked                 | Calling `unblock` for an address not in the block list                            |
+| `109` | `Unauthorized`              | Caller lacks the required permission                               | Non-admin calling an admin-only function, or modifying another user's content     |
+| `110` | `PostNotFound`              | The referenced post does not exist                                 | Tipping, liking, or deleting a post ID that was never created or has been deleted |
+| `111` | `ProfileNotFound`           | The referenced profile does not exist                              | Querying or following an address with no registered profile                       |
+| `112` | `PoolNotFound`              | The referenced pool does not exist                                 | Depositing to or withdrawing from a pool ID that has not been created             |
+| `113` | `PoolExists`                | A pool with this ID already exists                                 | Calling `create_pool` with a pool ID that is already registered                   |
+| `114` | `InvalidThreshold`          | The signature threshold is out of range                            | Setting a threshold of 0 or greater than the number of pool admins                |
+| `115` | `InsufficientSigners`       | Not enough admin signatures to authorise the operation             | Calling `pool_withdraw` with fewer signers than the pool threshold                |
+| `116` | `UnauthorizedSigner`        | One or more signers are not admins of the pool                     | Including a non-admin address in the signers list for a pool operation            |
+| `117` | `LowBalance`                | Insufficient token balance for the requested operation             | Tipping or withdrawing more than the available balance                            |
+| `118` | `WrongToken`                | The supplied token does not match the pool's token                 | Depositing a different token than the one the pool was created with               |
+| `119` | `AlreadyPaused`             | Contract is already paused                                         | Calling `pause` when the contract is already in the paused state                  |
+| `120` | `NotPaused`                 | Contract is not paused                                             | Calling `unpause` when the contract is not paused                                 |
+| `121` | `ContractPaused`            | Operation rejected because the contract is currently paused        | Any state-mutating call while the contract is paused                              |
+| `122` | `AlreadyFollowing`          | Caller is already following the target                             | Calling `follow` when a follow relationship already exists                        |
+| `123` | `NotFollowing`              | Caller is not following the target                                 | Calling `unfollow` when no follow relationship exists                             |
+| `124` | `SelfInteractionNotAllowed` | Caller attempted to interact with their own account                | Following, tipping, or blocking yourself                                          |
+| `125` | `InvalidAmount`             | The supplied amount is zero or negative                            | Passing `0` as a tip amount or deposit amount                                     |
+| `126` | `TipCooldownNotExpired`     | Tipping cooldown period has not elapsed yet                        | Tipping the same creator again before the cooldown window expires                 |
+| `127` | `InvalidCooldown`           | The supplied cooldown value is out of range                        | Setting a tipping cooldown below the minimum or above the maximum                 |
+| `128` | `GraphEntryExpired`         | A social-graph ledger entry (follow/block) has expired             | Accessing a follow or block record whose storage TTL was not bumped               |
+| `129` | `RoleRequired`              | Caller does not have the required governance role                  | Calling a role-gated governance function without the role                         |
+| `130` | `PoolAdminNotFound`         | The target address is not a pool admin                             | Removing an admin who is not in the pool's admin list                             |
+| `131` | `PoolAdminExists`           | The target address is already a pool admin                         | Adding an admin who is already in the pool's admin list                           |
+| `132` | `ProposalNotFound`          | The referenced governance proposal does not exist                  | Voting on or executing a proposal ID that was never created                       |
+| `133` | `ProposalNotPassed`         | The proposal has not reached quorum or threshold to execute        | Calling `execute_proposal` before the proposal has passed a vote                  |
+| `134` | `TimeLockNotExpired`        | The proposal time-lock has not elapsed                             | Calling `execute_proposal` before the mandatory delay has passed                  |
+| `135` | `QuorumNotMet`              | The vote did not reach the required quorum                         | Executing a proposal that received votes below the quorum threshold               |
+| `136` | `AlreadyVoted`              | Caller has already voted on this proposal                          | Submitting a second vote for the same proposal                                    |
+| `137` | `ReportNotFound`            | The referenced moderation report does not exist                    | Resolving a report ID that was never filed                                        |
+| `138` | `InvalidVerdict`            | The supplied moderation verdict is not a recognised value          | Passing an out-of-range verdict discriminant to `resolve_report`                  |
+| `139` | `InvalidPostId`             | The post ID is malformed or out of range                           | Constructing a post ID outside the valid sequence range                           |
+| `140` | `ZeroAddress`               | A zero/empty address was supplied where a real address is required | Passing `Address::zero()` as a creator, recipient, or admin                       |
+| `141` | `CannotRemoveLastAdmin`     | Removing this admin would leave the contract with no admins        | Calling `remove_admin` when only one admin remains                                |
+| `142` | `CannotRemoveLastUpgrader`  | Removing this upgrader would leave the contract with no upgraders  | Calling `remove_upgrader` when only one upgrader remains                          |
+
+---
+
+### SDK Error Mapping
+
+The TypeScript SDK (`packages/sdk/src/errors.ts`) maps Soroban contract error
+codes to typed exception classes. Use these classes to catch and handle specific
+contract errors in client code.
+
+```typescript
+import {
+  ContractErrorCode,
+  ValidationError,
+  UnauthorizedError,
+  InsufficientBalanceError,
+  CooldownError,
+  NotFoundError,
+  ContractError,
+} from "@linkora/sdk";
+```
+
+| Contract code(s)                                                              | SDK class                  | SDK error code         |
+| ----------------------------------------------------------------------------- | -------------------------- | ---------------------- |
+| `UsernameTaken` (102), `UsernameTooLong` (104), `PostTooLong`, `InvalidInput` | `ValidationError`          | `VALIDATION_ERROR`     |
+| `NotAdmin` → `Unauthorized` (109), `OnlyAuthor` (109), `Blocked` (107)        | `UnauthorizedError`        | `UNAUTHORIZED`         |
+| `InsufficientAllowance`, `LowBalance` (117)                                   | `InsufficientBalanceError` | `INSUFFICIENT_BALANCE` |
+| `TipCooldownNotExpired` (126)                                                 | `CooldownError`            | `COOLDOWN_ACTIVE`      |
+| `PostNotFound` (110), `ProfileNotFound` (111), `PoolNotFound` (112)           | `NotFoundError`            | `NOT_FOUND`            |
+| `AlreadyInitialized` (100), `SimulationFailed`                                | `ContractError`            | `CONTRACT_ERROR`       |
+
+For error codes not explicitly registered in the SDK's `errorCodeRegistry`, the
+SDK falls back to regex-based matching against the error message string (see
+`mapByRegex` in `packages/sdk/src/errors.ts`).
+
+**Example — catching a specific contract error:**
+
+```typescript
+import { LinkoraClient, UnauthorizedError, CooldownError } from "@linkora/sdk";
+
+try {
+  await client.tip(creatorAddress, 100n, tokenAddress);
+} catch (err) {
+  if (err instanceof CooldownError) {
+    console.error("Tip rejected: cooldown has not expired yet.");
+  } else if (err instanceof UnauthorizedError) {
+    console.error("Tip rejected: you are blocked by this creator.");
+  } else {
+    throw err;
+  }
+}
+```
