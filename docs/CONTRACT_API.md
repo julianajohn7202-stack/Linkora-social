@@ -626,6 +626,40 @@ Analytics Oracle         LinkoraContract           Indexer / Distribution
       |                        |         distribution      |
       |                        |         (airdrop / pool   |
       |                        |          deposit)         |
+
+## 10. Pool Withdrawal Process
+
+Community pools in Linkora are governed by a multi-sig model: a withdrawal can
+only proceed once a configurable **threshold** of pool admins have signed off.
+This section is a step-by-step guide for pool admins using the TypeScript SDK.
+
+---
+
+### Prerequisites
+
+- The pool has been created and funded (via `create_pool` / `deposit_pool`).
+- You have the Stellar public keys of all admins who will co-sign.
+- Each admin's wallet (Freighter or Ledger) is connected to the same app
+  instance, or you are coordinating signatures out-of-band.
+
+---
+
+### Step 1 — Check the current threshold
+
+Before initiating a withdrawal, confirm the number of signatures required:
+
+```typescript
+import { LinkoraClient } from "@linkora/sdk";
+
+const client = new LinkoraClient({
+  contractId: "CCONTRACTID...",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+});
+
+// Read the pool config to find the current threshold
+const pool = await client.getPool("my-pool-1");
+console.log(`Pool threshold: ${pool.threshold} of ${pool.admins.length} admins required`);
 ```
 
 ---
@@ -645,3 +679,182 @@ Analytics Oracle         LinkoraContract           Indexer / Distribution
 | -------------------------- | ---------------------------- | --------------------------------------- | --------------------------------------------- |
 | `TipEvent`                 | `tipper`, `post_id`          | `amount`, `fee`                         | A tip is successfully sent.                   |
 | `AttestationVerifiedEvent` | `oracle_name`, `report_hash` | `creator`, `window_start`, `window_end` | An analytics attestation passes verification. |
+
+### Step 2 — Collect admin signatures
+
+Each admin signs the prepared withdrawal transaction envelope. All signers must
+be current pool admins — if even one address in the `signers` array is not
+registered as an admin the contract returns `UnauthorizedSigner` (code 116).
+
+```typescript
+// Build the unsigned transaction envelope
+const txXdr = await client.preparePoolWithdrawTx(
+  [adminAddress1, adminAddress2], // must meet or exceed the pool threshold
+  "my-pool-1", // pool ID
+  500_000_000n, // amount in stroops (500 XLM)
+  recipientAddress // Stellar G... address to receive tokens
+);
+
+// --- Admin 1 signs ---
+// Pass txXdr to admin 1's wallet for signing (e.g. via Freighter)
+const signedByAdmin1 = await wallet.signTransaction(txXdr);
+
+// --- Admin 2 signs ---
+// Pass the envelope on to admin 2 for a second signature
+const signedByBoth = await wallet2.signTransaction(signedByAdmin1);
+```
+
+> **Coordination note.** In a typical flow each admin signs the same XDR
+> envelope in sequence and passes it to the next. The final signed envelope
+> (after all required admins have signed) is what you submit to Soroban.
+
+---
+
+### Step 3 — Submit the withdrawal
+
+```typescript
+import { submitTransaction } from "@linkora/sdk";
+
+// Submit the fully-signed envelope to Soroban
+const txHash = await submitTransaction(signedByBoth, {
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: "Test SDF Network ; September 2015",
+});
+
+console.log("Withdrawal submitted:", txHash);
+```
+
+---
+
+### Threshold Check
+
+The contract enforces the threshold on-chain:
+
+1. It counts how many of the supplied `signers` are registered admins of the pool.
+2. If the count is below the pool's `threshold`, it returns `InsufficientSigners` (code 115).
+3. If any address in `signers` is **not** a pool admin, it returns `UnauthorizedSigner` (code 116).
+
+```
+signers.length ≥ pool.threshold   AND   every signer ∈ pool.admins
+```
+
+---
+
+### Token Transfer
+
+When the threshold is met the contract transfers exactly `amount` stroops of the
+pool's token from the pool's internal ledger storage to `recipient`. The pool
+balance is decremented accordingly.
+
+If the requested amount exceeds the pool balance, the contract returns
+`LowBalance` (code 117) and no transfer occurs.
+
+---
+
+### Adding a Pool Admin
+
+```typescript
+// Existing admins authorise the addition of a new admin.
+// The number of authorising signers must still meet the current threshold.
+const txXdr = client.addPoolAdmin(
+  [adminAddress1, adminAddress2], // authorising admins (must meet threshold)
+  "my-pool-1", // pool ID
+  newAdminAddress // G... address of the new admin
+);
+```
+
+The contract rejects the call with `PoolAdminExists` (code 131) if the address
+is already an admin.
+
+---
+
+### Removing a Pool Admin
+
+```typescript
+// Removing an admin also requires threshold authorisation.
+const txXdr = client.removePoolAdmin(
+  [adminAddress1, adminAddress2], // authorising admins
+  "my-pool-1", // pool ID
+  adminToRemove // G... address of the admin to remove
+);
+```
+
+The contract returns `PoolAdminNotFound` (code 130) if the address is not an
+admin, and `CannotRemoveLastAdmin` (code 141) if the removal would leave the
+pool with zero admins.
+
+---
+
+### Updating the Threshold
+
+```typescript
+// Raise or lower the required signature count.
+// The call itself must be authorised by the current number of required signers.
+const txXdr = client.updatePoolThreshold(
+  [adminAddress1, adminAddress2], // must meet the *current* threshold
+  "my-pool-1", // pool ID
+  3 // new threshold (must be 1 ≤ threshold ≤ admin count)
+);
+```
+
+The contract returns `InvalidThreshold` (code 114) if the new value is 0 or
+greater than the number of registered admins.
+
+---
+
+### Error Quick-Reference
+
+| Situation                                  | Contract code | SDK class                  |
+| ------------------------------------------ | ------------- | -------------------------- |
+| Signer is not a pool admin                 | `116`         | `UnauthorizedError`        |
+| Fewer signers than the pool threshold      | `115`         | `UnauthorizedError`        |
+| Withdrawal amount exceeds pool balance     | `117`         | `InsufficientBalanceError` |
+| Pool ID does not exist                     | `112`         | `NotFoundError`            |
+| New threshold is 0 or > admin count        | `114`         | `ValidationError`          |
+| Removing the last admin                    | `141`         | `UnauthorizedError`        |
+| Adding an address that is already an admin | `131`         | `ValidationError`          |
+| Removing an address that is not an admin   | `130`         | `NotFoundError`            |
+
+---
+
+### Full TypeScript Example
+
+```typescript
+import { LinkoraClient, UnauthorizedError, InsufficientBalanceError } from "@linkora/sdk";
+
+const client = new LinkoraClient({
+  contractId: "CCONTRACTID...",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  publicKey: adminAddress1,
+});
+
+async function withdrawFromPool(
+  poolId: string,
+  amountStroops: bigint,
+  recipient: string,
+  signers: string[]
+): Promise<string> {
+  // 1. Prepare the transaction
+  const txXdr = await client.preparePoolWithdrawTx(signers, poolId, amountStroops, recipient);
+
+  // 2. Collect signatures from each admin wallet (implementation depends on your wallet integration)
+  let signed = txXdr;
+  for (const signer of signers) {
+    signed = await collectSignature(signer, signed);
+  }
+
+  // 3. Submit and return the transaction hash
+  try {
+    return await client.submitSignedTransaction(signed);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      throw new Error("Withdrawal failed: insufficient or invalid admin signatures.");
+    }
+    if (err instanceof InsufficientBalanceError) {
+      throw new Error("Withdrawal failed: pool balance is too low.");
+    }
+    throw err;
+  }
+}
+```
