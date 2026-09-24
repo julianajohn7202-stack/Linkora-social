@@ -18,11 +18,16 @@ Linkora is an open-source SocialFi platform built on Stellar and Soroban. It com
 | --------------------------- | ----------------------------------------------- |
 | `packages/contracts`        | ✅ Core social + DeFi primitives, unit tested   |
 | `packages/sdk`              | 🔧 In progress — typed contract client          |
+| `packages/reputation`       | 🔧 In progress — scaffolded                     |
+| `packages/analytics`        | 🔧 In progress — scaffolded                     |
 | `apps/web`                  | 🔧 In progress — Next.js web frontend           |
 | `apps/mobile`               | 🔧 In progress — Expo / React Native mobile app |
 | `services/indexer`          | 🔧 In progress — off-chain event indexer        |
 | `services/dm-relay`         | 🔧 In progress — E2EE direct-message relay      |
 | `services/analytics-oracle` | 🔧 In progress — on-chain analytics oracle      |
+| `services/notification`     | 🔧 In progress — scaffolded                     |
+| `services/search`           | 🔧 In progress — scaffolded                     |
+| `services/media`            | 🔧 In progress — scaffolded                     |
 | `examples/mini-apps`        | ✅ Example mini apps available                  |
 
 ---
