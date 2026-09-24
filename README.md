@@ -73,6 +73,24 @@ pnpm --filter contracts test      # or: cd packages/contracts && cargo test
 
 ---
 
+## Local Database Backup & Restore
+
+The Makefile includes targets for backing up and restoring the local development PostgreSQL database.
+
+```bash
+# Create a timestamped dump in ./backups/
+make db-backup
+
+# Restore from a previously created dump
+make db-restore file=backups/linkora_20240924_120000.dump
+```
+
+Backups are written as PostgreSQL custom-format (`.dump`) files to the `./backups/` directory.
+The PostgreSQL Docker Compose service must be running before executing either command.
+Override `POSTGRES_USER`, `POSTGRES_PASSWORD`, or `POSTGRES_DB` if you use non-default credentials.
+
+---
+
 ## Testing
 
 ```bash
