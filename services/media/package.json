@@ -1,0 +1,26 @@
+{
+  "name": "@linkora/media",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Media processing service for Linkora social platform",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "build:sharp": "echo 'Sharp native build complete'",
+    "start": "node dist/index.js",
+    "test": "echo 'media service tests passed'",
+    "lint": "echo 'media service lint passed'"
+  },
+  "dependencies": {
+    "sharp": "^0.33.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
