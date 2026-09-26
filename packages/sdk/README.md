@@ -116,3 +116,151 @@ Methods like `createPost`, `follow`, and `tip` **do not fetch sequence numbers**
 **These are not directly submittable.** They exist primarily to easily extract the Soroban `Operation` for batching (e.g., passing to `buildMultiOpTx`) or for server-side queueing where sequence management is handled by a background worker (like `TransactionQueue`).
 
 If you attempt to sign and submit this XDR directly, the network will reject it with a `tx_bad_seq` error.
+
+---
+
+## GovernanceClient
+
+Governance operations are exposed directly on `LinkoraClient` under the `gov*` method prefix. On-chain governance allows token holders to propose, vote on, and execute changes to protocol parameters.
+
+### Methods
+
+| Method                                                  | Type                  | Description                                                    |
+| ------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
+| `govPropose(proposer, parameter, newValue, newAddress)` | Write (throwaway XDR) | Submit a governance proposal                                   |
+| `govVote(voter, proposalId, support)`                   | Write (throwaway XDR) | Vote for (`true`) or against (`false`) a proposal              |
+| `govExecute(proposalId)`                                | Write (throwaway XDR) | Execute a passed proposal after the time-lock                  |
+| `govVeto(signers, poolId, proposalId)`                  | Write (throwaway XDR) | Veto a proposal (requires pool admin multi-sig)                |
+| `govGetProposal(proposalId)`                            | Read                  | Returns a `GovProposal` object                                 |
+| `govGetConfig()`                                        | Read                  | Returns the `GovConfig` (quorum, time-lock, vote window, etc.) |
+| `effectiveQuorum(proposalId)`                           | Read                  | Returns the effective quorum for a specific proposal           |
+
+### ProposalStatus enum
+
+`ProposalStatus` tracks execution state at the contract storage level:
+
+| Value                     | Meaning                                       |
+| ------------------------- | --------------------------------------------- |
+| `ProposalStatus.Pending`  | Proposal exists but has not been executed yet |
+| `ProposalStatus.Executed` | Proposal has been executed on-chain           |
+
+### GovStatus enum
+
+`GovStatus` tracks the full lifecycle of a proposal:
+
+| Value                | Meaning                                                          |
+| -------------------- | ---------------------------------------------------------------- |
+| `GovStatus.Active`   | Voting window is open                                            |
+| `GovStatus.Passed`   | Voting closed with enough `yes` votes; awaiting time-lock expiry |
+| `GovStatus.Executed` | Successfully executed on-chain                                   |
+| `GovStatus.Vetoed`   | Vetoed by pool admins before execution                           |
+| `GovStatus.Failed`   | Voting closed without reaching quorum or majority                |
+
+### VoteChoice
+
+`govVote` takes a boolean `support` parameter:
+
+| Value   | Meaning                                                    |
+| ------- | ---------------------------------------------------------- |
+| `true`  | Vote **for** the proposal (counted in `votes_for`)         |
+| `false` | Vote **against** the proposal (counted in `votes_against`) |
+
+### GovParameter enum
+
+The parameter to change is identified by `GovParameter`:
+
+| Value                             | Controls                                       |
+| --------------------------------- | ---------------------------------------------- |
+| `GovParameter.FeeBps`             | Protocol tip fee in basis points               |
+| `GovParameter.Treasury`           | Treasury address (pass via `newAddress`)       |
+| `GovParameter.TipCooldownWindow`  | Tip cooldown in ledgers                        |
+| `GovParameter.GovQuorum`          | Governance quorum percentage                   |
+| `GovParameter.GovTimeLock`        | Number of ledgers between pass and execution   |
+| `GovParameter.GovVoteWindow`      | Number of ledgers the voting window stays open |
+| `GovParameter.ModerationSlashBps` | Moderation slash fee in basis points           |
+
+### Examples
+
+#### createProposal — propose a fee change
+
+```ts
+import { LinkoraClient } from "linkora-sdk";
+import { GovParameter } from "linkora-sdk/generated/types";
+
+const client = new LinkoraClient({
+  contractId: "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+});
+
+// Propose reducing the protocol fee from 2% (200 bps) to 1% (100 bps)
+const opXdr = client.govPropose(
+  "GBFOY...", // proposer address
+  GovParameter.FeeBps, // parameter to change
+  100, // new value (100 bps = 1%)
+  null // newAddress — not applicable for FeeBps
+);
+console.log("Propose Op XDR:", opXdr);
+```
+
+#### Propose a treasury address change
+
+```ts
+const opXdr = client.govPropose(
+  "GBFOY...",
+  GovParameter.Treasury,
+  0, // newValue unused for address changes
+  "GNEW_TREASURY_ADDRESS..."
+);
+```
+
+#### vote — cast a vote
+
+```ts
+// Vote in favour of proposal #12
+const voteForXdr = client.govVote("GBFOY...", 12n, true);
+
+// Vote against proposal #12
+const voteAgainstXdr = client.govVote("GBFOY...", 12n, false);
+```
+
+#### executeProposal — execute after time-lock
+
+```ts
+// Execute proposal #12 after it has passed and the time-lock has elapsed
+const executeXdr = client.govExecute(12n);
+console.log("Execute Op XDR:", executeXdr);
+```
+
+#### delegate / veto — pool admin veto
+
+```ts
+// Multi-sig veto of proposal #12 by two pool admins
+const vetoXdr = client.govVeto(
+  ["GBFOY...", "GCO23..."], // pool admin signers
+  "moderation-pool", // pool ID
+  12n // proposal ID
+);
+console.log("Veto Op XDR:", vetoXdr);
+```
+
+#### Read proposal details
+
+```ts
+const proposal = await client.govGetProposal(12n);
+console.log(`Proposal #${proposal.id}`);
+console.log(`  Parameter: ${proposal.parameter}`);
+console.log(`  New value: ${proposal.new_value}`);
+console.log(`  Status: ${proposal.status}`); // GovStatus enum
+console.log(`  Votes for: ${proposal.votes_for}`);
+console.log(`  Votes against: ${proposal.votes_against}`);
+console.log(`  Created ledger: ${proposal.created_ledger}`);
+```
+
+#### Read governance configuration
+
+```ts
+const config = await client.govGetConfig();
+console.log(`Quorum: ${config.quorum}%`);
+console.log(`Vote window: ${config.vote_window_ledgers} ledgers`);
+console.log(`Time lock: ${config.time_lock_ledgers} ledgers`);
+```
