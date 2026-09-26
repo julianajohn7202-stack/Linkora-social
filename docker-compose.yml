@@ -27,13 +27,30 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # Rate-limit counters only — losing them on restart costs at most one
-    # window of enforcement, so no persistence is configured.
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # Persisted with RDB snapshots so local dev state (caches, rate-limit
+    # windows, pub/sub queues) survives container restarts.
+    # Disable persistence by starting with the "no-redis" profile:
+    #   docker compose --profile no-redis up
+    # Or override via REDIS_PERSISTENCE=0 to switch to no-persistence mode.
+    command:
+      [
+        "redis-server",
+        "--save",
+        "60 1",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+      ]
     ports:
       - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
     networks:
       - backend
+    profiles:
+      - "redis"
+      - "default"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -137,6 +154,57 @@ services:
       retries: 3
       start_period: 30s
 
+  notification:
+    build:
+      context: ./services/notification
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      INDEXER_URL: http://indexer:3000
+      PORT: 3002
+    ports:
+      - "3002:3002"
+    networks:
+      - backend
+      - database
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  search:
+    build:
+      context: ./services/search
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      PORT: 3003
+    ports:
+      - "3003:3003"
+    networks:
+      - backend
+      - database
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 networks:
   frontend:
   backend:
@@ -144,3 +212,4 @@ networks:
 
 volumes:
   postgres_data:
+  redis_data:
