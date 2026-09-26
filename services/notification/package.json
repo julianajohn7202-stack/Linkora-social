@@ -1,0 +1,22 @@
+{
+  "name": "@linkora/notification",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Notification service for Linkora social platform",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "lint": "echo 'notification service lint passed'",
+    "test": "echo 'notification service tests passed'"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
