@@ -2,3 +2,11 @@ packages:
   - "packages/*"
   - "apps/*"
   - "services/*"
+  # New services — listed explicitly so Turborepo pipeline tasks resolve
+  # correctly before the directories are created on disk.
+  - "services/notification"
+  - "services/search"
+  - "services/media"
+  # New packages
+  - "packages/reputation"
+  - "packages/analytics"
