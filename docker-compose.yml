@@ -137,6 +137,23 @@ services:
       retries: 3
       start_period: 30s
 
+  media:
+    build:
+      context: ./services/media
+    restart: unless-stopped
+    environment:
+      PORT: 3003
+    ports:
+      - "3003:3003"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 networks:
   frontend:
   backend:
