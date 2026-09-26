@@ -96,6 +96,67 @@ queue.on("status", (e) => {
 });
 ```
 
+## Cache Module
+
+The SDK ships with a lightweight **TTL in-memory cache** (`SdkCache`) to reduce redundant RPC round-trips for data that changes infrequently. It is entirely opt-in — `LinkoraClient` does not cache automatically.
+
+### TTL Defaults
+
+| Use Case                | Recommended TTL | Notes                                       |
+| ----------------------- | --------------- | ------------------------------------------- |
+| General reads           | 30 s (default)  | Profiles, pool metadata, contract state     |
+| Profile reads           | 60 s            | Profiles change rarely                      |
+| Governance parameters   | 120 s           | On-chain governance is slow-moving          |
+| Pool metadata           | 30 s            | Pools can receive tips at any time          |
+
+The default TTL is **30 seconds** with a default max size of **500 entries**.
+
+### Eviction Policy
+
+- **Lazy TTL eviction** — stale entries are removed at `get` time, never by a background timer.
+- **LRU-style size cap** — when `maxSize` is reached, the oldest entry (by insertion order) is evicted before the new one is stored.
+- `invalidate(key)` — removes a single key immediately (call this after any write).
+- `clear()` — flushes all entries.
+
+### Usage
+
+```ts
+import { SdkCache } from "linkora-sdk";
+
+// Default 30 s TTL, max 500 entries:
+const cache = new SdkCache();
+
+// Custom TTL and size:
+const profileCache = new SdkCache({ ttlMs: 60_000, maxSize: 200 });
+
+// Cache-aside pattern with LinkoraClient:
+async function getCachedProfile(address: string) {
+  const key = `profile:${address}`;
+  const hit = profileCache.get(key);
+  if (hit) return hit;
+
+  const profile = await client.getProfile(address);
+  profileCache.set(key, profile);
+  return profile;
+}
+
+// Invalidate after a write:
+await client.updateProfile(address, { username: "new-name" });
+profileCache.invalidate(`profile:${address}`);
+```
+
+### When NOT to Use the Cache
+
+Bypass or disable the cache for any data that must reflect the latest on-chain state:
+
+- **Real-time balances** — token or XLM balances change with every tipping transaction.
+- **Live post feeds** — new posts appear continuously.
+- **Pending / in-flight transactions** — transaction status must always be fetched fresh.
+- **Nonces / sequence numbers** — always fetch the current ledger sequence before building a transaction; a cached value causes `tx_bad_seq`.
+- **Active governance votes** — tallies change as participants vote.
+
+---
+
 ## API Semantics
 
 The SDK exposes two distinct paths for mutative (write) operations:
