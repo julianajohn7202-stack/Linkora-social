@@ -5,9 +5,9 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "target/**", ".next/**", ".expo/**"]
     },
-    "dev": { 
-      "persistent": true, 
-      "cache": false 
+    "dev": {
+      "persistent": true,
+      "cache": false
     },
     "lint": {
       "dependsOn": ["^build"]
@@ -23,6 +23,26 @@
     },
     "format": {
       "outputs": []
+    },
+    "@linkora/reputation#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "@linkora/reputation#test": {
+      "dependsOn": ["^build"]
+    },
+    "@linkora/reputation#typecheck": {
+      "cache": false
+    },
+    "@linkora/analytics#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "@linkora/analytics#test": {
+      "dependsOn": ["^build"]
+    },
+    "@linkora/analytics#typecheck": {
+      "cache": false
     }
   }
 }

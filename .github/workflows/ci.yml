@@ -31,6 +31,11 @@ jobs:
       - name: Type-check all TypeScript packages
         run: pnpm typecheck
 
+      - name: Verify reputation and analytics type check
+        run: |
+          pnpm --filter @linkora/reputation typecheck
+          pnpm --filter @linkora/analytics typecheck
+
       - name: Run JS/TS tests
         run: pnpm test
 
