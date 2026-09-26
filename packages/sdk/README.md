@@ -116,3 +116,104 @@ Methods like `createPost`, `follow`, and `tip` **do not fetch sequence numbers**
 **These are not directly submittable.** They exist primarily to easily extract the Soroban `Operation` for batching (e.g., passing to `buildMultiOpTx`) or for server-side queueing where sequence management is handled by a background worker (like `TransactionQueue`).
 
 If you attempt to sign and submit this XDR directly, the network will reject it with a `tx_bad_seq` error.
+
+## Pagination
+
+The Linkora SDK uses cursor-based pagination across its data access layers (including Soroban contract event polling, DM relay conversation history, and indexer queries). Cursor pagination ensures deterministic and stable results without missing records or producing phantom items when new transactions are written concurrently.
+
+### Cursor Encoding and Structure
+
+Unlike offset-based pagination (`offset`/`limit`), which degrades in performance on large datasets and experiences drift when items are inserted or deleted, cursor-based pagination uses state-derived, opaque pointers:
+
+- **Opaque Tokens**: Cursors are exposed to consumers as opaque strings (for example, base64-encoded position vectors or compound tokens like `<ledgerSequence>-<entryIndex>`).
+- **Underlying Composition**: Internally, cursors encode deterministic ordering keys such as the ledger sequence, event paging token, timestamp, or entity primary key.
+- **Client Handling**: Applications should treat cursor strings as opaque values. Do not attempt to parse, decompose, or fabricate cursors manually; always supply the exact cursor string returned by previous responses.
+
+### Forward and Backward Navigation
+
+APIs supporting pagination allow bidirectional traversal through feeds and event streams:
+
+- **Forward Navigation (`nextCursor` / `cursor`)**:
+  - Initial fetch: Send a request with a specified `limit` and no cursor (or the initial starting point).
+  - Subsequent pages: If more items exist, the response contains a `nextCursor` (or `pagingToken`). Pass this value as the `cursor` parameter for the next page request.
+  - Termination: When `nextCursor` is `undefined`, `null`, or the returned item count is 0, the current end of the stream has been reached.
+
+- **Backward Navigation (`prevCursor` / reverse order)**:
+  - For historical backfilling or reading towards older activity, APIs provide a `prevCursor` or accept direction flags (such as `order: "asc" | "desc"`).
+  - Supplying `prevCursor` retrieves preceding records up to the specified boundary.
+
+### TypeScript Example: Full Paginated Loop
+
+The following TypeScript example demonstrates how to implement a complete paginated loop using the SDK pattern, including page bounds, cursor progression, and result aggregation:
+
+```typescript
+import { LinkoraClient } from "linkora-sdk";
+
+export interface PaginatedResult<T> {
+  items: T[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
+/**
+ * Fetches all available records by iterating through cursor-paginated pages.
+ *
+ * @param fetchPage - Async callback fetching a single page by cursor and limit
+ * @param pageSize - Number of records requested per page
+ * @param maxRecords - Maximum total records to collect (defaults to Infinity)
+ * @returns Combined array of all fetched records
+ */
+export async function fetchAllPages<T extends { id: string }>(
+  fetchPage: (cursor?: string, limit?: number) => Promise<PaginatedResult<T>>,
+  pageSize: number = 50,
+  maxRecords: number = Infinity
+): Promise<T[]> {
+  const aggregated: T[] = [];
+  const seenIds = new Set<string>();
+  let currentCursor: string | undefined = undefined;
+  let hasMore = true;
+
+  while (hasMore && aggregated.length < maxRecords) {
+    const batchLimit = Math.min(pageSize, maxRecords - aggregated.length);
+    const page = await fetchPage(currentCursor, batchLimit);
+
+    if (!page.items || page.items.length === 0) {
+      break;
+    }
+
+    for (const item of page.items) {
+      // Deduplicate items that may overlap page boundaries
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        aggregated.push(item);
+      }
+    }
+
+    currentCursor = page.nextCursor;
+    hasMore = Boolean(page.hasMore && currentCursor);
+  }
+
+  return aggregated;
+}
+
+// Example usage:
+// const allMessages = await fetchAllPages(
+//   (cursor, limit) => relay.getMessages(conversationId, limit, cursor),
+//   50,
+//   500
+// );
+```
+
+### Deduplication and Cursor Invalidation
+
+When consuming cursor-paginated endpoints in distributed or real-time environments:
+
+- **Client-Side Deduplication**:
+  - Concurrent ledger closes and polling retries across replicas can result in boundary overlap.
+  - Always maintain a local deduplication set (e.g. keyed by transaction hash, event id, or composite key `address:seq`) before appending items to local state or UI stores.
+- **Cursor Invalidation and Expiration**:
+  - On-chain nodes and RPC clusters enforce retention horizons (pruning historical ledger state).
+  - If a cursor points to a ledger or partition that has expired or been pruned, the server responds with a cursor error (e.g. `410 Gone` or `INVALID_CURSOR`).
+  - Handling invalidation: When an invalidation error occurs, reset your stored cursor, fall back to the earliest available retention ledger or live network head, and initiate a gap reconciliation or backfill cycle.
+- **Persistent State with `CursorStore`**:
+  - For background pollers and long-lived client workers, persist cursors across restarts using the SDK's `CursorStore` implementations (`MemoryCursorStore`, `LocalStorageCursorStore`, `SecureStoreCursorStore`).
