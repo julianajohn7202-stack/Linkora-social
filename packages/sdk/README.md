@@ -116,3 +116,109 @@ Methods like `createPost`, `follow`, and `tip` **do not fetch sequence numbers**
 **These are not directly submittable.** They exist primarily to easily extract the Soroban `Operation` for batching (e.g., passing to `buildMultiOpTx`) or for server-side queueing where sequence management is handled by a background worker (like `TransactionQueue`).
 
 If you attempt to sign and submit this XDR directly, the network will reject it with a `tx_bad_seq` error.
+
+---
+
+## PostClient
+
+Post operations are exposed directly on `LinkoraClient`. This section covers creating and deleting posts on-chain, and querying the post feed from the off-chain indexer.
+
+### Methods
+
+| Method                                              | Type                  | Description                                                |
+| --------------------------------------------------- | --------------------- | ---------------------------------------------------------- |
+| `createPost(author, content)`                       | Write (throwaway XDR) | Builds a `create_post` operation XDR                       |
+| `prepareCreatePostTx(author, content, horizonUrl?)` | Write (submittable)   | Fetches real sequence, simulates, returns wallet-ready XDR |
+| `deletePost(author, postId)`                        | Write (throwaway XDR) | Builds a `delete_post` operation XDR                       |
+| `getPost(postId)`                                   | Read                  | Returns a `Post` object or `null`                          |
+| `getPostCount()`                                    | Read                  | Returns the total number of posts as `bigint`              |
+| `getPostsByAuthor(author, offset, limit)`           | Read                  | Returns an array of post IDs by author                     |
+| `getLikeCount(postId)`                              | Read                  | Returns the like count for a post                          |
+
+### FeedOptions interface
+
+The indexer's feed endpoint accepts the following query parameters. Pass them when calling `/api/feed` or `/api/feed/following/:address`:
+
+| Field    | Type               | Default | Description                                                                                            |
+| -------- | ------------------ | ------- | ------------------------------------------------------------------------------------------------------ |
+| `limit`  | `number`           | `20`    | Number of posts to return (max 100)                                                                    |
+| `offset` | `number`           | `0`     | Number of posts to skip (for offset pagination)                                                        |
+| `viewer` | `string`           | —       | Stellar address of the requesting user; filters out posts from blocked accounts                        |
+| `cursor` | `string \| number` | —       | Opaque cursor for cursor-based pagination (explore feed: numeric score; following feed: ISO timestamp) |
+| `tag`    | `string`           | —       | Filter posts by a single hashtag (case-insensitive)                                                    |
+
+The response shape for all feed endpoints:
+
+```ts
+{
+  posts: Post[];       // array of post objects
+  total: number;       // total matching rows (offset feed) or posts.length (cursor feed)
+  limit: number;       // echoed from request
+  offset: number;      // echoed from request (offset feed only)
+  has_more: boolean;   // true when more pages are available
+  next_cursor?: any;   // next cursor value (cursor feed only)
+}
+```
+
+### Examples
+
+#### createPost — build operation XDR for server-side queue
+
+```ts
+import { LinkoraClient } from "linkora-sdk";
+
+const client = new LinkoraClient({
+  contractId: "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+});
+
+// Returns throwaway XDR — pass to TransactionQueue or buildMultiOpTx, not directly to wallet
+const opXdr = client.createPost("GBFOY...", "Hello, Soroban!");
+console.log("Operation XDR:", opXdr);
+```
+
+#### prepareCreatePostTx — wallet-ready transaction
+
+```ts
+// Returns a fully simulated XDR with the real account sequence
+const txXdr = await client.prepareCreatePostTx("GBFOY...", "Hello, Soroban!");
+// Pass txXdr to Freighter or another Stellar wallet for signing
+```
+
+#### deletePost
+
+```ts
+const opXdr = client.deletePost("GBFOY...", 42n);
+console.log("Delete Post Op XDR:", opXdr);
+```
+
+#### getFeed — offset pagination via the indexer REST API
+
+```ts
+const response = await fetch(
+  "https://indexer.linkora.example/api/feed?limit=20&offset=0&viewer=GBFOY..."
+);
+const { posts, has_more } = await response.json();
+```
+
+#### getFeed — cursor-based explore feed
+
+```ts
+// First page
+const first = await fetch("https://indexer.linkora.example/api/feed/explore?limit=20");
+const { posts, next_cursor } = await first.json();
+
+// Next page — pass next_cursor as cursor
+const second = await fetch(
+  `https://indexer.linkora.example/api/feed/explore?limit=20&cursor=${next_cursor}`
+);
+```
+
+#### getFeed — following feed with tag filter
+
+```ts
+const response = await fetch(
+  "https://indexer.linkora.example/api/feed/following/GBFOY...?limit=20&tag=defi"
+);
+const { posts } = await response.json();
+```
