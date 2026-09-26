@@ -716,6 +716,61 @@ anything running more than one replica.
 
 ---
 
+## 7a. Nginx / Load Balancer Rate Limiting
+
+An Nginx reverse proxy is provided at `infra/nginx/nginx.conf` and is included in the Docker Compose stack. It adds infrastructure-level rate limiting on top of the application-level limits already enforced inside each service.
+
+### Media upload rate limit
+
+| Endpoint | Method | Limit | Burst | Response on violation |
+| --- | --- | --- | --- | --- |
+| `/api/posts` | `POST` | 10 requests / minute / IP | 2 | `429 Too Many Requests` |
+| `/api/posts/*/media` | `POST` | 10 requests / minute / IP | 2 | `429 Too Many Requests` |
+
+When the limit is exceeded Nginx returns:
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+Content-Type: text/html
+```
+
+The `Retry-After: 60` header tells clients to wait 60 seconds (one rate-limit window) before retrying. Mobile and web clients should surface this to the user as a friendly "please wait before uploading again" message.
+
+### How it works
+
+The Nginx configuration uses two `limit_req_zone` directives keyed by `$binary_remote_addr` (the client IP in 4-byte binary form, minimising memory use):
+
+```nginx
+# 10 uploads per minute per IP — applied to POST /api/posts and POST /api/posts/*/media
+limit_req_zone $binary_remote_addr zone=media_upload:10m rate=10r/m;
+
+# 100 read requests per minute per IP — defence-in-depth on all other /api/* routes
+limit_req_zone $binary_remote_addr zone=api_read:10m rate=100r/m;
+
+limit_req_status 429;
+```
+
+The `burst=2 nodelay` parameters allow a burst of two requests above the limit to be served immediately (not queued), after which further requests within the window are rejected with 429.
+
+### Deployment configuration
+
+The Nginx service is included in the root `docker-compose.yml` and starts after all three backend services are healthy. It listens on port **80** and proxies:
+
+| Path prefix | Upstream |
+| --- | --- |
+| `/api/`, `/ws`, `/health`, `/metrics` | `indexer:3000` |
+| `/relay/` | `dm-relay:3001` |
+| `/oracle/` | `analytics-oracle:4000` |
+
+### Staging and production
+
+Apply the same `infra/nginx/nginx.conf` in staging and production. In a Kubernetes environment, use an `nginx.conf` ConfigMap and mount it into your Nginx Deployment, or configure equivalent rules in your cloud load balancer (e.g. AWS ALB request throttling or Cloudflare rate limiting rules) targeting the same endpoints and thresholds.
+
+> **Note:** The infrastructure-level limit (10 uploads / min / IP) is independent of the application-level write rate limit (`RATE_LIMIT_WRITE_RPM`, default 50 RPM). Both are enforced; the stricter per-IP limit applies first at the proxy layer.
+
+---
+
 ## 8. Monitoring and Alerting
 
 All services emit structured JSON logs via [pino](https://getpino.io). Each log line includes a `service` field for easy filtering.
