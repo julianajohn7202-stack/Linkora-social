@@ -187,6 +187,17 @@ export function KeyboardShortcutsProvider({ children }: { children: React.ReactN
           composeHandlerRef.current?.();
           break;
 
+        case "c":
+          event.preventDefault();
+          // Fire the same event that NavComposeButton dispatches so any registered
+          // compose handler (ComposeModal) opens regardless of where it listens.
+          if (composeHandlerRef.current) {
+            composeHandlerRef.current();
+          } else {
+            window.dispatchEvent(new Event("open-compose"));
+          }
+          break;
+
         case "/":
           event.preventDefault();
           searchInputRef.current?.current?.focus();
