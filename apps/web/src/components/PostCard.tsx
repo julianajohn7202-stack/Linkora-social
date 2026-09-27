@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { BlurhashImage } from "./BlurhashImage";
 
 export interface Post {
   id: string | number;
@@ -11,7 +12,10 @@ export interface Post {
   like_count?: string | number;
   timestamp?: string | number;
   created_at?: string;
+  /** URL of the post image, if any. */
   imageUrl?: string;
+  /** Blurhash string for the image placeholder (optional). */
+  blurhash?: string;
 }
 
 interface PostCardProps {
@@ -124,6 +128,18 @@ export function PostCard({
       <p className="whitespace-pre-wrap break-words leading-relaxed text-[var(--foreground)] mb-4 text-base">
         {highlightText(post.content, query)}
       </p>
+
+      {/* Post image with blurhash placeholder — only rendered when imageUrl is present */}
+      {post.imageUrl && (
+        <BlurhashImage
+          src={post.imageUrl}
+          alt="Post image"
+          blurhash={post.blurhash}
+          aspectRatio="16/9"
+          className="rounded-lg mb-4 overflow-hidden"
+          loading="lazy"
+        />
+      )}
 
       <div
         className="flex items-center gap-6 border-t border-[var(--border)]/40 pt-3"

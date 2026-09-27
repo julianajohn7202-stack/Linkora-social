@@ -14,6 +14,7 @@ import {
 } from "@/lib/LinkoraEventSubscriber";
 import { FollowDrawer } from "@/components/profile/FollowDrawer";
 import { CreatorTokenPanel } from "@/components/profile/CreatorTokenPanel";
+import { BlurhashImage } from "@/components/BlurhashImage";
 import {
   TransactionBuilder,
   BASE_FEE,
@@ -329,12 +330,16 @@ export default function ProfilePage() {
           className="flex flex-col md:flex-row items-start md:items-center gap-4 md:gap-6 bg-[var(--bg-secondary)] p-4 md:p-6 rounded-2xl border border-[var(--bg-tertiary)]"
         >
           {/* Avatar */}
-          <img
-            src={blockieUrl(address)}
-            alt={`${profile.username}'s avatar`}
-            className="w-24 h-24 rounded-full border-4 border-[var(--bg-primary)]"
-            id="profile-avatar"
-          />
+          <div id="profile-avatar" className="w-24 h-24 rounded-full overflow-hidden border-4 border-[var(--bg-primary)] flex-shrink-0">
+            <BlurhashImage
+              src={blockieUrl(address)}
+              alt={`${profile.username}'s avatar`}
+              width={96}
+              height={96}
+              loading="eager"
+              style={{ borderRadius: "50%" }}
+            />
+          </div>
 
           {/* Name / address / bio */}
           <div className="flex-1 min-w-0">
@@ -553,7 +558,14 @@ function PostCard({ post }: { post: IndexerPost }) {
       aria-label={`Post ${post.id}`}
     >
       <div className="flex items-center gap-3 mb-3">
-        <img src={blockieUrl(post.author)} alt="" className="w-8 h-8 rounded-full" />
+        <BlurhashImage
+          src={blockieUrl(post.author)}
+          alt=""
+          width={32}
+          height={32}
+          loading="lazy"
+          style={{ borderRadius: "50%", flexShrink: 0 }}
+        />
         <span className="font-mono text-sm text-[var(--text-muted)]">{truncate(post.author)}</span>
         <span className="text-xs text-[var(--text-muted)] ml-auto">
           {ledgerToRelative(post.created_ledger)}
