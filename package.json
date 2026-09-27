@@ -41,5 +41,8 @@
     ]
   },
   "packageManager": "pnpm@9.15.9",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@noble/ciphers": "^0.5.3"
+  }
 }
