@@ -18,6 +18,7 @@
 7. [Worked Example](#7-worked-example)
 8. [Protected Endpoints](#8-protected-endpoints)
 9. [Known Limitations of v1](#9-known-limitations-of-v1)
+10. [Storage Layout](#10-storage-layout)
 
 ---
 
@@ -309,3 +310,81 @@ Every protected endpoint is JSON-only today, so this is latent rather than live.
 live vulnerability the moment a protected route accepts another content type. **Any new
 protected endpoint must be JSON**, or the raw-body capture in
 `services/indexer/src/middleware/rawBody.ts` must be widened to cover its content type first.
+
+---
+
+## 10. Storage Layout
+
+The Linkora Soroban contract (`packages/contracts/contracts/linkora-contracts/src/lib.rs`) organizes on-chain state across Soroban's three storage durability namespaces:
+
+- **`persistent`**: Long-lived application records (profiles, posts, adjacency-set social graph, governance proposals, moderation reports, and credential roots). Automatically extended via `LEDGER_BUMP` (`535,000` ledgers, ~30 days at 5s/ledger) when remaining TTL falls below `LEDGER_THRESHOLD` (`534,900` ledgers).
+- **`instance`**: Contract-wide configuration scalars, counters, role maps, and staged WASM upgrade proposals tied to the contract instance TTL.
+- **`temporary`**: Short-lived rate-limiting and anti-spam cooldown entries (`TipCooldown`, `PoolDepositCooldown`) that expire automatically without requiring rent cleanup.
+
+### 10.1 Typed `StorageKey` Enum (`#[contracttype]`)
+
+| Key Name | Type | Namespace | Description |
+| :--- | :--- | :--- | :--- |
+| `Post(u64)` | `Post` | `persistent` | Maps `post_id` to its `Post` record (`id`, `author`, `content`, `tip_total`, `timestamp`, `like_count`). |
+| `Profile(Address)` | `Profile` | `persistent` | Maps user `Address` to their `Profile` (`address`, `username`, `creator_token`). |
+| `Following(Address)` | `Vec<Address>` | `persistent` | Legacy following list for `user` (retained for migration to ADR-001 adjacency-set keys). |
+| `Followers(Address)` | `Vec<Address>` | `persistent` | Legacy followers list for `user` (retained for migration to ADR-001 adjacency-set keys). |
+| `Pool(Symbol)` | `Pool` | `persistent` | Maps `pool_id` to community `Pool` state (`token`, `balance`, `admins`, `threshold`). |
+| `Like(u64, Address)` | `bool` | `persistent` | Tracks whether `(post_id, user)` has liked a given post. |
+| `AuthorPosts(Address)` | `Vec<u64>` | `persistent` | Ordered list of post IDs authored by `Address`. |
+| `Blocks(Address)` | `Map<Address, ()>` | `persistent` | Map of addresses blocked by `blocker`. |
+| `BlockedBy(Address)` | `Map<Address, ()>` | `persistent` | Reverse index of addresses that have blocked `blocked`. |
+| `UsernameIndex(String)` | `Address` | `persistent` | Reverse index mapping normalized `username` to owner `Address` to enforce uniqueness. |
+| `TipCooldown(u64, Address)` | `u32` | `temporary` | Records the last ledger sequence number when `tipper` tipped `post_id` (default window: `17,280` ledgers). |
+| `PoolDepositCooldown(Symbol, Address)` | `u32` | `temporary` | Records the last ledger sequence number when `depositor` deposited into `pool_id` (default window: `720` ledgers). |
+| `Edge(Address, Address)` | `bool` | `persistent` | ADR-001 directed social graph edge `(follower, followee) -> bool`. |
+| `FollowingCount(Address)` | `u32` | `persistent` | Total number of accounts `user` is currently following. |
+| `FollowersCount(Address)` | `u32` | `persistent` | Total number of followers for `user`. |
+| `FollowingIdx(Address, u32)` | `Address` | `persistent` | Zero-based ordered index `(user, seq) -> followee Address` for O(1) swap-remove pagination. |
+| `FollowersIdx(Address, u32)` | `Address` | `persistent` | Zero-based ordered index `(user, seq) -> follower Address` for O(1) swap-remove pagination. |
+| `FollowingPos(Address, Address)` | `u32` | `persistent` | Position lookup `(follower, followee) -> seq` inside `FollowingIdx`. |
+| `FollowersPos(Address, Address)` | `u32` | `persistent` | Position lookup `(followee, follower) -> seq` inside `FollowersIdx`. |
+| `GraphMigrated(Address)` | `bool` | `persistent` | Indicates whether `user`'s legacy `Following`/`Followers` vectors have been migrated to ADR-001 keys. |
+| `DmPublicKey(Address)` | `BytesN<32>` | `persistent` | User's X25519 public key for end-to-end encrypted direct messages. |
+| `CredentialRoot(Address)` | `BytesN<32>` | `persistent` | User's verified credential Merkle root. |
+| `NullifierSet(Address, BytesN<32>)` | `bool` | `persistent` | Consumed credential proof nullifier `(user, nullifier)` preventing replay attacks. |
+| `CredentialAuthority` | `BytesN<32>` | `persistent` | Trusted Ed25519 public key authorized to sign credential root updates. |
+| `GovProposal(u64)` | `GovProposal` | `persistent` | Governance proposal record indexed by `proposal_id`. |
+| `GovVote(u64, Address)` | `bool` | `persistent` | Tracks whether `voter` has already voted on `proposal_id`. |
+| `GovConfig` | `GovConfig` | `persistent` | Active on-chain governance configuration parameters. |
+| `GovProposalCount` | `u64` | `persistent` | Auto-incrementing counter for the next governance proposal ID. |
+| `GovOpenProposalCount(Address)` | `u32` | `persistent` | Number of currently open proposals created by `proposer` (bounded by `MAX_OPEN_PROPOSALS_PER_PROPOSER = 5`). |
+| `OracleKey(Symbol)` | `BytesN<32>` | `persistent` | Maps `oracle_name` symbol to its trusted Ed25519 public key. |
+| `AttestationNullifier(BytesN<32>)` | `bool` | `persistent` | Replay guard mapping `sha256(report_cbor)` to `true` once processed. |
+| `Report(u64, Address)` | `Report` | `persistent` | Moderation report submitted by `reporter` against `post_id`. |
+| `ReportCount(u64)` | `u32` | `persistent` | Total number of moderation reports filed against `post_id`. |
+| `OpenReports(Address)` | `u32` | `persistent` | Count of unresolved reports filed by `reporter` (bounded by `MAX_OPEN_REPORTS_PER_REPORTER = 10`). |
+| `DeletedPost(u64)` | `bool` | `persistent` | Tombstone flag marking `post_id` as deleted for lazy cleanup. |
+| `DeletedProfile(Address)` | `bool` | `persistent` | Tombstone flag marking `user` profile as deleted for lazy cleanup. |
+| `PostLikersCount(u64)` | `u32` | `persistent` | Total number of likers indexed for `post_id` cleanup tracking. |
+| `PostLikersIdx(u64, u32)` | `Address` | `persistent` | Indexed liker address `(post_id, seq)` used during lazy post cleanup. |
+| `PostReportersIdx(u64, u32)` | `Address` | `persistent` | Indexed reporter address `(post_id, seq)` used during lazy post cleanup. |
+| `PostTipCooldownsCount(u64)` | `u32` | `persistent` | Count of active tip cooldown entries associated with `post_id`. |
+| `PostTipCooldownsIdx(u64, u32)` | `Address` | `persistent` | Indexed tipper address `(post_id, seq)` for tip cooldown cleanup. |
+| `UpgradeProposal` | `UpgradeProposal` | `instance` | Staged WASM upgrade proposal subject to `UPGRADE_TIMELOCK_LEDGERS` (`17,280` ledgers). |
+
+### 10.2 Instance-Storage Scalar Keys (`symbol_short!`)
+
+| Constant | Symbol Key | Type | Namespace | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST_CT` | `"POST_CT"` | `u64` | `instance` | Sequential counter for total created posts. |
+| `PROFILE_CREATED_CT` | `"PROF_CT"` | `u64` | `instance` | Sequential counter for total registered profiles. |
+| `ADMIN` | `"ADMIN"` | `Address` | `instance` | Primary contract administrator address. |
+| `TREASURY` | `"TREASURY"` | `Address` | `instance` | Protocol treasury recipient address for fee splits. |
+| `FEE_BPS` | `"FEE_BPS"` | `u32` | `instance` | Protocol fee in basis points (bounded by `MAX_FEE_BPS`). |
+| `INITIALIZED` | `"INIT"` | `bool` | `instance` | One-time initialization guard flag. |
+| `TIP_COOLDOWN_WINDOW` | `"TIP_CD_W"` | `u32` | `instance` | Configurable ledger cooldown window between tips on the same post. |
+| `REGISTERED_USERS` | `"R_USERS"` | `Vec<Address>` | `instance` | Registry of initialized user addresses. |
+| `RENT_RATE_BPS_KEY` | `"RENT_BPS"` | `u32` | `instance` | Storage rent rate in basis points. |
+| `MODERATION_SLASH_BPS` | `"MOD_SL_B"` | `u32` | `instance` | Slash percentage in basis points applied on moderation verdicts. |
+| `CONTRACT_STATE` | `"CT_STATE"` | `ContractState` | `instance` | Tracks schema `version` (`u32`) and `implementation_wasm_hash` (`Option<BytesN<32>>`). |
+| `ROLES` | `"ROLES"` | `Map<Address, u32>` | `instance` | Role-based access control bitmask map. |
+| `PAUSED` | `"PAUSED"` | `bool` | `instance` | Emergency circuit-breaker pause flag. |
+| `MAX_POST_LEN_KEY` | `"MAX_POST"` | `u32` | `instance` | Configurable maximum post length override. |
+| `MAX_BIO_LEN_KEY` | `"MAX_BIO"` | `u32` | `instance` | Configurable maximum profile bio length override. |
+
