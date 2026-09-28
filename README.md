@@ -1,6 +1,7 @@
 # Linkora
 
 [![CI](https://github.com/ijayabby/Linkora-social/actions/workflows/ci.yml/badge.svg)](https://github.com/ijayabby/Linkora-social/actions/workflows/ci.yml)
+[![Contract Coverage](https://img.shields.io/badge/contract%20coverage-≥80%25-brightgreen)](https://github.com/ijayabby/Linkora-social/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Telegram](https://img.shields.io/badge/Telegram-Join-blue?logo=telegram)](https://t.me/+13csp8G4ccRhY2Zk)
 
