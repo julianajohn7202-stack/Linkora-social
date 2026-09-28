@@ -184,7 +184,10 @@ export default function GovernancePage() {
                 executedProposals.map((p) => (
                   <div
                     key={p.id.toString()}
-                    className="flex justify-between items-center p-4 border border-[var(--border)] rounded-xl bg-[var(--muted)]/40"
+                    tabIndex={0}
+                    role="article"
+                    aria-label={`Executed proposal: ${p.parameter} changed to ${p.new_value.toString()}`}
+                    className="flex justify-between items-center p-4 border border-[var(--border)] rounded-xl bg-[var(--muted)]/40 transition-all duration-200 hover:border-violet-500/60 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
                   >
                     <div>
                       <p className="font-semibold text-[var(--foreground)]">{p.parameter}</p>
@@ -209,7 +212,10 @@ export default function GovernancePage() {
                 displayedProposals.map((p) => (
                   <div
                     key={p.id.toString()}
-                    className="border border-[var(--border)] rounded-xl p-5 bg-[var(--background)] shadow-sm"
+                    tabIndex={0}
+                    role="article"
+                    aria-label={`Proposal #${p.id.toString()}: Update ${p.parameter}`}
+                    className="border border-[var(--border)] rounded-xl p-5 bg-[var(--background)] shadow-sm transition-all duration-200 hover:border-violet-500/60 hover:shadow-violet-950/20 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
                   >
                     <div className="flex justify-between items-start mb-4">
                       <div>
