@@ -309,3 +309,161 @@ Every protected endpoint is JSON-only today, so this is latent rather than live.
 live vulnerability the moment a protected route accepts another content type. **Any new
 protected endpoint must be JSON**, or the raw-body capture in
 `services/indexer/src/middleware/rawBody.ts` must be widened to cover its content type first.
+
+---
+
+## Rewards
+
+Creator rewards in Linkora flow through two complementary mechanisms: **direct tipping**
+(peer-to-peer, synchronous) and **analytics-attested rewards** (oracle-driven, asynchronous).
+There is no separate `rewards.rs` module — both mechanisms are implemented directly in
+`src/lib.rs`.
+
+> **Architecture note.** The issue references an epoch/distribute/claim pattern. The current
+> contract does not implement on-chain epoch accounting or a pull-based claim queue. Rewards
+> reach creators in one of two ways:
+>
+> 1. **Tip** — immediately transferred to the post author minus the protocol fee.
+> 2. **Analytics attestation** — the oracle verifies a signed CBOR report off-chain; the
+>    contract records the attestation on-chain and emits an event that the indexer uses to
+>    trigger an off-chain distribution action (e.g., airdrop or pool deposit).
+
+---
+
+### Mechanism 1 — Direct tipping
+
+Any user can tip a post. Tokens are split between the post author and the treasury at the
+time of the call — there is no claimable balance to withdraw later.
+
+**Function:** `tip(tipper, post_id, token, amount)`
+
+| Parameter | Type      | Description                                       |
+| --------- | --------- | ------------------------------------------------- |
+| `tipper`  | `Address` | Address sending the tip (must be authenticated).  |
+| `post_id` | `u64`     | ID of the post to tip.                            |
+| `token`   | `Address` | SEP-41 token contract address.                    |
+| `amount`  | `i128`    | Tip amount in smallest token units (must be > 0). |
+
+**Fee split:**
+
+```
+fee_amount   = floor(amount × fee_bps / 10_000)
+author_amount = amount − fee_amount
+```
+
+`fee_amount` is transferred to the treasury. `author_amount` is transferred directly to the
+post author. `post.tip_total` is incremented by `author_amount` (capped at 10^18).
+
+**Cooldown:** One tip per tipper per post per `TIP_COOLDOWN_WINDOW` ledgers (default ~1 day
+at 5 s/ledger). Configurable by Admin via `set_tip_cooldown_window`.
+
+**Errors:**
+
+- Post does not exist
+- Tipper is the post author
+- Either party has blocked the other
+- Cooldown has not expired
+- `tip_total` cap would be exceeded
+- Post author has no registered profile
+
+---
+
+### Mechanism 2 — Analytics oracle attestation
+
+The oracle pipeline lets an off-chain analytics service publish a signed report about a
+creator's activity (views, engagement, etc.). The contract verifies the Ed25519 signature,
+records a nullifier to prevent replay, and emits an event. Downstream reward distribution
+is handled off-chain by the indexer or a separate distribution service.
+
+#### Epoch definition
+
+An **epoch** is defined by the `window_start` and `window_end` Unix timestamps in the
+analytics report CBOR. The oracle computes this window off-chain based on its own scheduling
+logic (e.g., weekly or monthly). The contract validates only that the current ledger
+timestamp falls within the window.
+
+#### Distribution call
+
+**Function:** `verify_analytics_attestation(oracle_name, report_cbor, signature, creator, window_start, window_end) → bool`
+
+| Parameter      | Type         | Description                                                                |
+| -------------- | ------------ | -------------------------------------------------------------------------- |
+| `oracle_name`  | `Symbol`     | Name of the oracle whose key is used for verification.                     |
+| `report_cbor`  | `Bytes`      | Raw CBOR-encoded analytics report.                                         |
+| `signature`    | `BytesN<64>` | Ed25519 signature of `sha256(report_cbor)` from the registered oracle key. |
+| `creator`      | `Address`    | Creator address this report is for.                                        |
+| `window_start` | `u64`        | Unix timestamp of the epoch start.                                         |
+| `window_end`   | `u64`        | Unix timestamp of the epoch end.                                           |
+
+Returns `true` on successful verification.
+
+**Errors:**
+
+- Oracle not registered (`register_oracle` has not been called for `oracle_name`)
+- Signature verification fails
+- Current ledger timestamp is outside `[window_start, window_end]`
+- Attestation has already been submitted (nullifier replay)
+
+#### Claimable window
+
+The contract accepts an attestation only while the current ledger timestamp satisfies:
+
+```
+window_start ≤ ledger.timestamp() ≤ window_end
+```
+
+Attestations submitted after `window_end` are rejected with `"attestation outside time
+window"`. This bounds the window during which the oracle must call the contract.
+
+#### Re-claim prevention
+
+Each attestation is identified by `sha256(report_cbor)`. The contract stores this hash as
+`AttestationNullifier(report_hash) → bool` in persistent storage. Any second call with the
+same `report_cbor` is rejected as `"attestation already submitted"`.
+
+---
+
+### Sequence diagram — oracle → attest → creator reward
+
+```
+Analytics Oracle         LinkoraContract           Indexer / Distribution
+      |                        |                           |
+      | -- register_oracle()-->|                           |
+      |    (admin, one-time)   |                           |
+      |                        |                           |
+      |  [epoch window opens]  |                           |
+      |                        |                           |
+      | -- verify_analytics_  |                           |
+      |    attestation() ----->|                           |
+      |    (report_cbor,       | store nullifier           |
+      |     signature,         | emit AttestationVerified  |
+      |     creator, window)   |  Event                    |
+      |                        |                           |
+      |    true /<-------------|                           |
+      |                        |                           |
+      |                        |-- AttestationVerified --->|
+      |                        |   Event (indexed)         |
+      |                        |                           |
+      |                        |         trigger off-chain |
+      |                        |         distribution      |
+      |                        |         (airdrop / pool   |
+      |                        |          deposit)         |
+```
+
+---
+
+### Admin-only functions
+
+| Function                  | Required role | Description                                                  |
+| ------------------------- | ------------- | ------------------------------------------------------------ |
+| `register_oracle`         | `Admin`       | Registers (or rotates) an Ed25519 oracle public key by name. |
+| `set_fee`                 | `Admin`       | Updates the tip protocol fee in basis points.                |
+| `set_treasury`            | `Admin`       | Updates the treasury address that receives tip fees.         |
+| `set_tip_cooldown_window` | `Admin`       | Adjusts the per-tipper per-post cooldown in ledgers.         |
+
+### Events emitted
+
+| Event                      | Topics                       | Fields                                  | Emitted when                                  |
+| -------------------------- | ---------------------------- | --------------------------------------- | --------------------------------------------- |
+| `TipEvent`                 | `tipper`, `post_id`          | `amount`, `fee`                         | A tip is successfully sent.                   |
+| `AttestationVerifiedEvent` | `oracle_name`, `report_hash` | `creator`, `window_start`, `window_end` | An analytics attestation passes verification. |
