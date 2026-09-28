@@ -39,7 +39,7 @@ importers:
         version: 10.9.2(@types/node@22.19.19)(typescript@6.0.3)
       turbo:
         specifier: latest
-        version: 2.10.12
+        version: 2.11.5
 
   apps/mobile:
     dependencies:
@@ -165,6 +165,9 @@ importers:
       browser-image-compression:
         specifier: ^2.0.2
         version: 2.0.2
+      canvas-confetti:
+        specifier: ^1.9.3
+        version: 1.9.4
       framer-motion:
         specifier: ^12.42.2
         version: 12.42.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -202,6 +205,9 @@ importers:
       "@testing-library/react":
         specifier: ^14.1.2
         version: 14.3.1(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      "@types/canvas-confetti":
+        specifier: ^1.9.0
+        version: 1.9.0
       "@types/jest":
         specifier: ^29.5.11
         version: 29.5.14
@@ -3821,50 +3827,50 @@ packages:
         integrity: sha512-vxhUy4J8lyeyinH7Azl1pdd43GJhZH/tP2weN8TntQblOY+A0XbT8DJk1/oCPuOOyg/Ja757rG0CgHcWC8OfMA==,
       }
 
-  "@turbo/darwin-64@2.10.12":
+  "@turbo/darwin-64@2.11.5":
     resolution:
       {
-        integrity: sha512-9nKgKoF6ZOUsM+or0OtNf+TTJSfGvDNP7ZFv/ZGWVwOSCkumyctQiTeHwB4UNljHTnC41AqylgbunLDHoccNrA==,
+        integrity: sha512-KdY4y7BBjIisl+jAkb3FFaRjClGqHyaeHCcVcCT8LBzFFwUu6thgfxyRZAx0uL4KoxLmH+iOan8UhVf/aDDcaA==,
       }
     cpu: [x64]
     os: [darwin]
 
-  "@turbo/darwin-arm64@2.10.12":
+  "@turbo/darwin-arm64@2.11.5":
     resolution:
       {
-        integrity: sha512-H4Elb1jqTZVeIC9bbcNwjSzemZ6RegoTOVHeuV5Osirt2Z8UguTyisMEkvZjPVZgMeN9J4ERZBFad40tFnkb7w==,
+        integrity: sha512-ToZDGi2u410+TfRtC/O1/LpujGgvNJoRBZnwVXob7oO0+3OSlwIO3zofXKUvwQvlba7a8ZXPyCZwufjAXd7f0w==,
       }
     cpu: [arm64]
     os: [darwin]
 
-  "@turbo/linux-64@2.10.12":
+  "@turbo/linux-64@2.11.5":
     resolution:
       {
-        integrity: sha512-lr7KIotukvjZwEXiFSYAeOH3BWzjFVBbSzTbv0fuGFsNukYyH0+g1hB5ecqnJkgkYU+KHEMG1edOhnjiKON1wQ==,
+        integrity: sha512-Ub2d/nAbdWLaSytcEaPp1wm/YuIvHEIqNrCRMI/UgOGyFdOhgxm8VyWPAJilQWRYxYVrqEUoy2K5S5K8SG50rA==,
       }
     cpu: [x64]
     os: [android, linux]
 
-  "@turbo/linux-arm64@2.10.12":
+  "@turbo/linux-arm64@2.11.5":
     resolution:
       {
-        integrity: sha512-f0pZDTtvzB5SuNwuXBaKbZHUCMCukgc8nMlHEuvLmj91Fzec+MEbr3cAvGNor5htEDqZnO6Lxt9N/GPI/77oGA==,
+        integrity: sha512-JQjmGxp724Wuft9FAxPMtmBur1CEdUyxJ+FVoIvKkgj63rXHl9PYCWrsU2tMjVi609XTQ3M8vZD9Yc9qVAVYrw==,
       }
     cpu: [arm64]
     os: [android, linux]
 
-  "@turbo/windows-64@2.10.12":
+  "@turbo/windows-64@2.11.5":
     resolution:
       {
-        integrity: sha512-SDOueJRjS/QcykWf2KCRtTLmIl5YMKsLbXkXQGhDwcTXvKXZiS5ih5lBl/gkwZIpYFjqA/rAlfMzlAFcVHNe0g==,
+        integrity: sha512-AFkbPmXNd8XgCi/66YEHR2bVl3gtusXyDihTIVEPAuSB+7ulLmJePvz1unWPVKLHdbCTTIdKq2mpJ1B1e3lJXw==,
       }
     cpu: [x64]
     os: [win32]
 
-  "@turbo/windows-arm64@2.10.12":
+  "@turbo/windows-arm64@2.11.5":
     resolution:
       {
-        integrity: sha512-0i0mVUa4kKk+/B3RwEwPMf9CB+T7ul56hn5FFHNA4VUNTOoLBEd6aNf3FaKfCatDNZ6cicCEf6if9QUTVyzzcA==,
+        integrity: sha512-52ziXYP3snGOxjv19xA3WL1WDKv9Q6uDAa/7EKIR5j4hocMlYURkrOHbJ2ZZI+VfPU5MwKpcGeRfHxHJu7Y/Pw==,
       }
     cpu: [arm64]
     os: [win32]
@@ -3909,6 +3915,12 @@ packages:
     resolution:
       {
         integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==,
+      }
+
+  "@types/canvas-confetti@1.9.0":
+    resolution:
+      {
+        integrity: sha512-aBGj/dULrimR1XDZLtG9JwxX1b4HPRF6CX9Yfwh3NvstZEm1ZL7RBnel4keCPSqs1ANRu1u2Aoz9R+VmtjYuTg==,
       }
 
   "@types/connect@3.4.38":
@@ -5624,6 +5636,12 @@ packages:
     resolution:
       {
         integrity: sha512-yk0l/YSrOnFZk3UROpDLQD9+kC1l4meK/wed583AXrzoarMGJcbRi2Q4RaUYbKxYAsZ8sWmaSa/DsLmdBeI1vQ==,
+      }
+
+  canvas-confetti@1.9.4:
+    resolution:
+      {
+        integrity: sha512-yxQbJkAVrFXWNbTUjPqjF7G+g6pDotOUHGbkZq2NELZUMDpiJ85rIEazVb8GTaAptNW2miJAXbs1BtioA251Pw==,
       }
 
   cbor-extract@2.2.2:
@@ -12850,10 +12868,10 @@ packages:
         integrity: sha512-McnNiV1l8RYeY8tBgEpuodCC1mLUdbSN+CYBL7kJsJNInOP8UjDDEwdk6Mw60vdLLrr5NHKZhMAOSrR2NZuQ+w==,
       }
 
-  turbo@2.10.12:
+  turbo@2.11.5:
     resolution:
       {
-        integrity: sha512-AswgMPnpOoaVZHrrSBejETzEbuIA69OVGwfkHwfrY0A23VjWXBANzgq9+OymWOHAIArB7D1+1z498WY8fGg1Jw==,
+        integrity: sha512-qLXheqz3TUvJpHIV6MUBwkNkvwKxMVG/QsimyiKT9DfNWPHJ294G/i5nDaH+fbHJt3UH7orubNNxAqYkbUNGAQ==,
       }
     hasBin: true
 
@@ -16512,22 +16530,22 @@ snapshots:
 
   "@tsconfig/node16@1.0.4": {}
 
-  "@turbo/darwin-64@2.10.12":
+  "@turbo/darwin-64@2.11.5":
     optional: true
 
-  "@turbo/darwin-arm64@2.10.12":
+  "@turbo/darwin-arm64@2.11.5":
     optional: true
 
-  "@turbo/linux-64@2.10.12":
+  "@turbo/linux-64@2.11.5":
     optional: true
 
-  "@turbo/linux-arm64@2.10.12":
+  "@turbo/linux-arm64@2.11.5":
     optional: true
 
-  "@turbo/windows-64@2.10.12":
+  "@turbo/windows-64@2.11.5":
     optional: true
 
-  "@turbo/windows-arm64@2.10.12":
+  "@turbo/windows-arm64@2.11.5":
     optional: true
 
   "@tybys/wasm-util@0.10.1":
@@ -16562,6 +16580,8 @@ snapshots:
     dependencies:
       "@types/connect": 3.4.38
       "@types/node": 20.17.57
+
+  "@types/canvas-confetti@1.9.0": {}
 
   "@types/connect@3.4.38":
     dependencies:
@@ -18063,6 +18083,8 @@ snapshots:
   camelcase@6.3.0: {}
 
   caniuse-lite@1.0.30001791: {}
+
+  canvas-confetti@1.9.4: {}
 
   cbor-extract@2.2.2:
     dependencies:
@@ -23816,14 +23838,14 @@ snapshots:
     dependencies:
       safe-buffer: 5.2.1
 
-  turbo@2.10.12:
+  turbo@2.11.5:
     optionalDependencies:
-      "@turbo/darwin-64": 2.10.12
-      "@turbo/darwin-arm64": 2.10.12
-      "@turbo/linux-64": 2.10.12
-      "@turbo/linux-arm64": 2.10.12
-      "@turbo/windows-64": 2.10.12
-      "@turbo/windows-arm64": 2.10.12
+      "@turbo/darwin-64": 2.11.5
+      "@turbo/darwin-arm64": 2.11.5
+      "@turbo/linux-64": 2.11.5
+      "@turbo/linux-arm64": 2.11.5
+      "@turbo/windows-64": 2.11.5
+      "@turbo/windows-arm64": 2.11.5
 
   tweetnacl@1.0.3: {}
 
