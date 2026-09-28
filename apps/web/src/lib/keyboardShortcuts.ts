@@ -29,7 +29,7 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
   { keys: ["g", "s"], label: "Go to Settings", group: "Navigation" },
 
   // ── General ──────────────────────────────────────────────────────────────
-  { keys: ["Escape"], label: "Close modal / return from view", group: "General" },
+  { keys: ["Escape"], label: "Clear search / close modal", group: "General" },
 ] as const;
 
 /** Groups for ordered rendering in the help modal. */
