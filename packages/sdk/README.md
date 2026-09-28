@@ -116,3 +116,265 @@ Methods like `createPost`, `follow`, and `tip` **do not fetch sequence numbers**
 **These are not directly submittable.** They exist primarily to easily extract the Soroban `Operation` for batching (e.g., passing to `buildMultiOpTx`) or for server-side queueing where sequence management is handled by a background worker (like `TransactionQueue`).
 
 If you attempt to sign and submit this XDR directly, the network will reject it with a `tx_bad_seq` error.
+
+---
+
+## ProfileClient — profile methods
+
+All profile operations are available directly on the `LinkoraClient` instance. There is no
+separate `ProfileClient` class — the methods are part of `LinkoraClient`, which extends the
+generated base client.
+
+```ts
+import { LinkoraClient } from "linkora-sdk";
+
+const client = new LinkoraClient({
+  contractId: "CCNZILBYJQBX...",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: "Test SDF Network ; September 2015",
+});
+```
+
+---
+
+### `getProfile(address)`
+
+Fetch a user profile by Stellar address.
+
+**Signature:**
+
+```ts
+getProfile(address: string): Promise<Profile | null>
+```
+
+**Parameters:**
+
+| Name      | Type     | Description                            |
+| --------- | -------- | -------------------------------------- |
+| `address` | `string` | Stellar public key (`G…`) of the user. |
+
+**Returns:** `Promise<Profile | null>` — the `Profile` object, or `null` if the profile
+does not exist or has expired (storage rent unpaid).
+
+**Errors thrown:**
+
+| Error class         | When                                                             |
+| ------------------- | ---------------------------------------------------------------- |
+| `InvalidInputError` | `address` is not a valid Stellar public key or contract address. |
+| `NetworkError`      | RPC request failed.                                              |
+| `SimulationError`   | Contract simulation failed for an unexpected reason.             |
+
+**Example:**
+
+```ts
+const profile = await client.getProfile("GBFOY2LJQZ...");
+if (profile) {
+  console.log(`Username: ${profile.username}`);
+  console.log(`Creator token: ${profile.creator_token}`);
+} else {
+  console.log("Profile not found.");
+}
+```
+
+---
+
+### `setProfile(user, username, creatorToken)`
+
+Build a `set_profile` transaction XDR. Creates a new profile or updates an existing one.
+
+> **Note:** This method returns a base64 XDR string built with a throwaway keypair. It is
+> not directly submittable. Pass the result to `TransactionQueue` or use
+> `prepareTransaction` to build a submittable envelope.
+
+**Signature:**
+
+```ts
+setProfile(user: string, username: string, creatorToken: string): string
+```
+
+**Parameters:**
+
+| Name           | Type     | Description                                                               |
+| -------------- | -------- | ------------------------------------------------------------------------- |
+| `user`         | `string` | Stellar public key of the profile owner. Must be the transaction signer.  |
+| `username`     | `string` | Unique display name (1–50 characters). Must not be taken by another user. |
+| `creatorToken` | `string` | Contract ID of the user's SEP-41 creator token.                           |
+
+**Returns:** `string` — base64-encoded transaction XDR (throwaway source, not directly submittable).
+
+**Errors thrown:**
+
+| Error class         | When                                                                     |
+| ------------------- | ------------------------------------------------------------------------ |
+| `InvalidInputError` | `user` or `creatorToken` is not a valid address, or `username` is empty. |
+| `ValidationError`   | `username` or `creatorToken` fails format validation.                    |
+
+**Example:**
+
+```ts
+// Build the XDR and enqueue it for submission
+const xdr = client.setProfile("GBFOY2LJQZ...", "alice", "CABC123DEF...");
+
+queue.enqueue(xdr);
+await queue.run();
+```
+
+**Submittable variant:** If you need a fully prepared transaction (with correct sequence
+number and footprint), use `prepareTransaction` directly:
+
+```ts
+const sourceAccount = await client.getAccountForTx("GBFOY2LJQZ...");
+const tx = await client.prepareTransaction(
+  "set_profile",
+  sourceAccount
+  // scvAddress, scvString, scvAddress for user/username/creatorToken
+);
+const xdrEnvelope = tx.toEnvelope().toXDR("base64");
+// Sign xdrEnvelope with your wallet and submit
+```
+
+---
+
+### `deleteProfile(user)`
+
+Build a `delete_profile` transaction XDR. Deletes the caller's profile and places a
+tombstone for lazy storage cleanup.
+
+**Signature:**
+
+```ts
+deleteProfile(user: string): string
+```
+
+**Parameters:**
+
+| Name   | Type     | Description                              |
+| ------ | -------- | ---------------------------------------- |
+| `user` | `string` | Stellar public key of the profile owner. |
+
+**Returns:** `string` — base64-encoded transaction XDR (throwaway source, not directly submittable).
+
+**Errors thrown:**
+
+| Error class         | When                                   |
+| ------------------- | -------------------------------------- |
+| `InvalidInputError` | `user` is not a valid Stellar address. |
+
+**Example:**
+
+```ts
+const xdr = client.deleteProfile("GBFOY2LJQZ...");
+queue.enqueue(xdr);
+await queue.run();
+```
+
+---
+
+### `getProfileCount()`
+
+Get the total number of profiles ever registered. This counter is never decremented on
+profile deletion.
+
+**Signature:**
+
+```ts
+getProfileCount(): Promise<bigint>
+```
+
+**Returns:** `Promise<bigint>` — cumulative profile creation count.
+
+**Example:**
+
+```ts
+const count = await client.getProfileCount();
+console.log(`Total registered users: ${count.toString()}`);
+```
+
+---
+
+### `getAddressByUsername(username)`
+
+Resolve a username to its owner's Stellar address. Use this to look up profiles by name.
+
+> **Note:** The contract does not expose a full-text search endpoint. For searching
+> profiles by partial username, use the indexer's REST API instead.
+
+**Signature:**
+
+```ts
+getAddressByUsername(username: string): Promise<string | null>
+```
+
+**Parameters:**
+
+| Name       | Type     | Description                                     |
+| ---------- | -------- | ----------------------------------------------- |
+| `username` | `string` | The exact username to look up (case-sensitive). |
+
+**Returns:** `Promise<string | null>` — the owner's Stellar public key, or `null` if the
+username is not registered.
+
+**Errors thrown:**
+
+| Error class         | When                                          |
+| ------------------- | --------------------------------------------- |
+| `InvalidInputError` | `username` is empty or exceeds 50 characters. |
+| `NetworkError`      | RPC request failed.                           |
+
+**Example:**
+
+```ts
+// Look up by username, then fetch the full profile
+const address = await client.getAddressByUsername("alice");
+if (address) {
+  const profile = await client.getProfile(address);
+  console.log(`alice's address: ${address}`);
+  console.log(`Creator token: ${profile?.creator_token}`);
+} else {
+  console.log("Username not found.");
+}
+```
+
+---
+
+### `Profile` type
+
+```ts
+interface Profile {
+  address: string; // Stellar public key of the owner
+  username: string; // Unique display name
+  creator_token: string; // Contract ID of the creator's SEP-41 token
+}
+```
+
+---
+
+### Error types reference
+
+All profile methods throw errors from the SDK error hierarchy. The most common ones:
+
+| Class               | Code                | When                                                     |
+| ------------------- | ------------------- | -------------------------------------------------------- |
+| `InvalidInputError` | `INVALID_INPUT`     | Bad address format, empty string, or out-of-range value. |
+| `ValidationError`   | `VALIDATION_ERROR`  | Structural validation failed (e.g., wrong type).         |
+| `NotFoundError`     | `NOT_FOUND`         | Profile, username, or resource does not exist on-chain.  |
+| `NetworkError`      | `NETWORK_ERROR`     | RPC connection or timeout failure.                       |
+| `SimulationError`   | `SIMULATION_FAILED` | Contract simulation returned an error.                   |
+
+Import them from `linkora-sdk`:
+
+```ts
+import { NotFoundError, InvalidInputError, NetworkError, SimulationError } from "linkora-sdk";
+
+try {
+  const profile = await client.getProfile("GBFOY2...");
+} catch (err) {
+  if (err instanceof NotFoundError) {
+    console.log("Profile does not exist.");
+  } else if (err instanceof NetworkError) {
+    console.log("RPC unavailable, try again later.");
+  } else {
+    throw err;
+  }
+}
+```
