@@ -820,4 +820,83 @@ Redis holds only transient rate-limit state. No backup is required — on restar
 
 Redis is, however, a **hard startup dependency in production**: services validate `REDIS_URL` before binding a port. Treat it as a required component of the deployment, not an optional cache, and make sure every replica of a service resolves to the same Redis endpoint.
 
+---
+
+## 10. Staging Environment Deployment
+
+The staging environment uses a Docker Compose override file (`docker-compose.staging.yml`) layered on top of the base `docker-compose.yml`. This adds the three new microservices — **notification**, **search**, and **media** — and sets `NODE_ENV=staging` on all existing services.
+
+### Quick start
+
+```bash
+# Copy and fill in staging-specific values
+cp .env.example .env.staging
+
+# Bring up the full stack (base services + new microservices)
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.staging.yml \
+  --env-file .env.staging \
+  up -d
+```
+
+### Manual deploy via script
+
+`scripts/deploy_staging.sh` syncs the repository to a remote host and
+(re)deploys the new microservices:
+
+```bash
+# Deploy all three new services to a remote staging host
+STAGING_HOST=staging.example.com \
+STAGING_USER=ubuntu \
+STAGING_DEPLOY_DIR=/opt/linkora \
+  ./scripts/deploy_staging.sh
+
+# Deploy only the notification service (dry run first)
+DRY_RUN=true \
+STAGING_HOST=staging.example.com \
+STAGING_SERVICES=notification \
+  ./scripts/deploy_staging.sh
+
+# Run without dry-run
+STAGING_HOST=staging.example.com \
+STAGING_SERVICES=notification \
+  ./scripts/deploy_staging.sh
+```
+
+| Variable             | Required | Default                     | Description                               |
+| -------------------- | -------- | --------------------------- | ----------------------------------------- |
+| `STAGING_HOST`       | ✅       | —                           | SSH hostname or IP of the staging server  |
+| `STAGING_USER`       |          | `ubuntu`                    | SSH login user                            |
+| `STAGING_DEPLOY_DIR` |          | `/opt/linkora`              | Absolute project path on the staging host |
+| `STAGING_SERVICES`   |          | `notification search media` | Services to (re)deploy                    |
+| `COMPOSE_PROJECT`    |          | `linkora-staging`           | Docker Compose project name               |
+| `SKIP_BUILD`         |          | `false`                     | Skip `docker compose build`               |
+| `DRY_RUN`            |          | `false`                     | Print commands without executing them     |
+
+### CI/CD workflow
+
+The `.github/workflows/deploy-staging.yml` workflow triggers automatically on
+every push to `main` that touches any service directory or Compose file. It can
+also be triggered manually via the GitHub Actions UI with optional `services`
+and `skip_build` inputs.
+
+Required GitHub Actions environment (`staging`):
+
+| Secret / Variable    | Type     | Description                                     |
+| -------------------- | -------- | ----------------------------------------------- |
+| `STAGING_SSH_KEY`    | Secret   | Private SSH key for the staging host            |
+| `STAGING_HOST`       | Variable | Staging server hostname or IP                   |
+| `STAGING_USER`       | Variable | SSH login user (default `ubuntu`)               |
+| `STAGING_DEPLOY_DIR` | Variable | Project root path on the staging host           |
+| `STAGING_BASE_URL`   | Variable | Base URL shown as the environment URL in GitHub |
+
+### Service ports in staging
+
+| Service        | Port |
+| -------------- | ---- |
+| `notification` | 3002 |
+| `search`       | 3003 |
+| `media`        | 3004 |
+
 ##
