@@ -309,3 +309,121 @@ Every protected endpoint is JSON-only today, so this is latent rather than live.
 live vulnerability the moment a protected route accepts another content type. **Any new
 protected endpoint must be JSON**, or the raw-body capture in
 `services/indexer/src/middleware/rawBody.ts` must be widened to cover its content type first.
+
+---
+
+## Moderation
+
+The moderation module provides stake-backed post reporting and moderator-reviewed verdicts.
+There are no bans or per-user blocks in the moderation system — it operates at the post
+level. Account-level blocking is handled separately via `block_user` / `unblock_user`.
+
+### Overview
+
+1. Any registered user files a `report_post` and locks tokens as collateral.
+2. A `Moderator`-role account, co-signed by the `mods` pool threshold, calls `review_report`.
+3. If the verdict is **Upheld**: the reported post is deleted, the author's creator tokens
+   may be slashed (if `MODERATION_SLASH_BPS > 0`), and the reporter's stake is returned.
+4. If the verdict is **Dismissed**: the reporter's stake is sent to the treasury.
+
+### Report reason codes
+
+Reports carry a `reason_hash: BytesN<32>` — the SHA-256 of the off-chain reason string.
+The hash is stored on-chain; the raw reason text is stored off-chain (e.g. in the indexer).
+This keeps on-chain storage minimal while giving indexers a tamper-evident link to the
+full reason.
+
+Clients should compute:
+
+```
+reason_hash = sha256(reason_text_utf8)
+```
+
+The contract does not validate or interpret the hash contents.
+
+### Report flow
+
+```
+Reporter                    Contract                       Moderator
+   |                           |                               |
+   |-- report_post() --------->|                               |
+   |   (stake locked in        |                               |
+   |    contract escrow)       |                               |
+   |                           |                               |
+   |                           |<-- review_report() -----------|
+   |                           |    (Upheld or Dismissed)      |
+   |                           |                               |
+   |  IF UPHELD:               |                               |
+   |<-- stake returned --------|                               |
+   |                        post deleted                       |
+   |                     author slashed (if slash_bps > 0)     |
+   |                           |                               |
+   |  IF DISMISSED:            |                               |
+   |                     stake → treasury                      |
+```
+
+### Rate limits
+
+| Guard                           | Limit                                            |
+| ------------------------------- | ------------------------------------------------ |
+| Open reports per reporter       | 10 (enforced by `OpenReports(reporter)` counter) |
+| Reporter cannot report own post | validated in `validate_reporter_can_report`      |
+
+### Admin-only function table
+
+| Function                           | Required role | Auth requirements                                             | Description                                             |
+| ---------------------------------- | ------------- | ------------------------------------------------------------- | ------------------------------------------------------- |
+| `review_report`                    | `Moderator`   | Moderator address signs + M-of-N `mods` pool admin co-signers | Reviews a pending report and issues a verdict.          |
+| `grant_role`                       | `Admin`       | Admin address signs                                           | Grants the `Moderator` role to an account.              |
+| `revoke_role`                      | `Admin`       | Admin address signs                                           | Revokes the `Moderator` role from an account.           |
+| `gov_execute` (ModerationSlashBps) | `Admin`       | Admin executes a passed governance proposal                   | Changes the slash percentage applied to upheld reports. |
+
+### Public functions
+
+| Function           | Signature                                               | Description                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `report_post`      | `(reporter, post_id, token, stake_amount, reason_hash)` | Files a report and locks `stake_amount` tokens in contract escrow. Panics if the post does not exist, reporter is the author, already reported, or the reporter has ≥ 10 open reports. |
+| `get_report`       | `(post_id, reporter) → Option<Report>`                  | Returns the `Report` struct for a given `(post_id, reporter)` pair, or `None`.                                                                                                         |
+| `get_report_count` | `(post_id) → u32`                                       | Returns the total number of reports filed against a post.                                                                                                                              |
+
+### Data types
+
+**`Report` struct**
+
+| Field            | Type           | Description                                         |
+| ---------------- | -------------- | --------------------------------------------------- |
+| `post_id`        | `u64`          | ID of the reported post.                            |
+| `reporter`       | `Address`      | Address that filed the report.                      |
+| `stake_amount`   | `i128`         | Amount of tokens locked as collateral.              |
+| `token`          | `Address`      | SEP-41 token contract used for the stake.           |
+| `reason_hash`    | `BytesN<32>`   | SHA-256 of the off-chain reason string.             |
+| `created_ledger` | `u32`          | Ledger sequence when the report was filed.          |
+| `status`         | `ReportStatus` | Current state: `Pending`, `Upheld`, or `Dismissed`. |
+
+**`ReportStatus` enum**
+
+| Variant     | Meaning                                                                             |
+| ----------- | ----------------------------------------------------------------------------------- |
+| `Pending`   | Report filed; awaiting moderator review.                                            |
+| `Upheld`    | Moderator ruled the post violated policy. Post deleted, stake returned to reporter. |
+| `Dismissed` | Moderator ruled the report invalid. Stake sent to treasury.                         |
+
+### How moderation affects other operations
+
+- A post deleted via `review_report` (verdict = Upheld) is removed from persistent storage
+  and the author's `AuthorPosts` index. Associated likes, reports, and tip-cooldown entries
+  are lazily cleaned up via `batch_cleanup_post`.
+- Slashing burns creator tokens from the post author's balance using `burn_from`. The
+  contract must have been pre-approved via `token.approve()`. If the allowance is
+  insufficient, slashing is skipped gracefully — the rest of the upheld flow (post deletion,
+  stake refund) still completes.
+- The `MODERATION_SLASH_BPS` parameter is governed via the `ModerationSlashBps` governance
+  proposal type and defaults to `0` (no slashing) at initialization.
+
+### Events emitted
+
+| Event                          | Topics                | Fields         | Emitted when            |
+| ------------------------------ | --------------------- | -------------- | ----------------------- |
+| `PostReportedEvent`            | `post_id`, `reporter` | `stake_amount` | `report_post` succeeds. |
+| `PostRemovedByModerationEvent` | `post_id`, `reporter` | —              | Verdict = Upheld.       |
+| `ReportDismissedEvent`         | `post_id`, `reporter` | —              | Verdict = Dismissed.    |
