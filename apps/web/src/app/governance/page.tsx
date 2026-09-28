@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useWalletContext } from "@/components/WalletProvider";
 import { LinkoraClient, GovParameter, GovProposal, GovStatus } from "linkora-sdk";
+import { CharacterCounter } from "@/components/post/CharacterCounter";
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.NEXT_PUBLIC_CONTRACT_ID ?? "";
@@ -45,6 +46,7 @@ export default function GovernancePage() {
   // Form state
   const [formParam, setFormParam] = useState<GovParameter>(GovParameter.FeeBps);
   const [formValue, setFormValue] = useState<string>("");
+  const [formDescription, setFormDescription] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fetchProposals = async (targetPage: number = 1) => {
@@ -104,6 +106,7 @@ export default function GovernancePage() {
     try {
       await client.govPropose(address, formParam, BigInt(formValue), null);
       setFormValue("");
+      setFormDescription("");
       await fetchProposals();
     } catch (error) {
       console.error("Failed to propose", error);
@@ -342,6 +345,33 @@ export default function GovernancePage() {
                     onChange={(e) => setFormValue(e.target.value)}
                     className="w-full bg-[var(--muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-violet-500/50"
                     placeholder="1000"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="proposal-description"
+                    className="block text-sm font-medium text-[var(--text-muted)] mb-1"
+                  >
+                    Description
+                  </label>
+                  <textarea
+                    id="proposal-description"
+                    rows={4}
+                    value={formDescription}
+                    onChange={(e) => setFormDescription(e.target.value)}
+                    maxLength={600}
+                    aria-describedby="proposal-description-counter"
+                    className="w-full resize-none bg-[var(--muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-violet-500/50 placeholder:text-[var(--text-muted)]"
+                    placeholder="Explain why this parameter change is needed…"
+                  />
+                  <CharacterCounter
+                    id="proposal-description-counter"
+                    value={formDescription}
+                    max={500}
+                    amberAt={80}
+                    redAt={100}
+                    className="mt-1 text-right"
                   />
                 </div>
 
