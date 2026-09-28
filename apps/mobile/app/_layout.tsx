@@ -103,6 +103,8 @@ function RootNavigator() {
         <Stack.Screen name="pool/[id]" options={{ title: "Pool" }} />
         <Stack.Screen name="pools/[id]" options={{ title: "Pool" }} />
         <Stack.Screen name="dm/[address]" options={{ title: "Direct Message" }} />
+        <Stack.Screen name="governance/index" options={{ title: "Governance" }} />
+        <Stack.Screen name="governance/[id]" options={{ title: "Proposal" }} />
       </Stack>
     </>
   );
