@@ -9,4 +9,5 @@ export { WalletButton } from "./WalletButton";
 export { MiniAppIcon } from "./MiniAppIcon";
 export { TipModal } from "./TipModal";
 export { AnalyticsCard } from "./AnalyticsCard";
+export { FeeTooltip } from "./FeeTooltip";
 export type { MiniApp } from "./MiniAppIcon";
