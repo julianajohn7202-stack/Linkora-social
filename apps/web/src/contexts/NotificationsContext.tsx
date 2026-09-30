@@ -18,7 +18,7 @@ const EXCERPT_LEN = 60;
 const INDEXER_URL = process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:3001";
 const INDEXER_WS_URL = INDEXER_URL.replace(/^http/, "ws") + "/ws";
 
-export type NotificationType = "follow" | "like" | "tip" | "governance";
+export type NotificationType = "follow" | "like" | "tip" | "mention" | "governance";
 
 export interface Notification {
   id: string;

@@ -213,3 +213,24 @@ jobs:
           cargo test -p linkora-contracts --test fuzz_credential
           cargo test -p linkora-contracts --test fuzz_governance
           cargo test -p linkora-contracts --test fuzz_oracle
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked --version 0.31.5
+
+      - name: Generate coverage report
+        run: |
+          cargo tarpaulin \
+            --workspace \
+            --exclude-files "contracts/linkora-contracts/tests/*" \
+            --out Html Xml \
+            --output-dir coverage \
+            --fail-under 80 \
+            --timeout 120
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-coverage-report
+          path: packages/contracts/coverage/
+          retention-days: 30

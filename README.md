@@ -1,6 +1,7 @@
 # Linkora
 
 [![CI](https://github.com/ijayabby/Linkora-social/actions/workflows/ci.yml/badge.svg)](https://github.com/ijayabby/Linkora-social/actions/workflows/ci.yml)
+[![Contract Coverage](https://img.shields.io/badge/contract%20coverage-≥80%25-brightgreen)](https://github.com/ijayabby/Linkora-social/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Telegram](https://img.shields.io/badge/Telegram-Join-blue?logo=telegram)](https://t.me/+13csp8G4ccRhY2Zk)
 
@@ -290,6 +291,17 @@ ADMIN_SECRET=S... TREASURY_ADDRESS=G... ./scripts/deploy_testnet.sh --dry-run
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to set up your environment, branch conventions, and the PR process.
+
+---
+
+## Troubleshooting
+
+| Problem                                             | Fix                                                                     |
+| --------------------------------------------------- | ----------------------------------------------------------------------- |
+| `pnpm: command not found`                           | `npm install -g pnpm`                                                   |
+| `cargo: command not found`                          | `curl https://sh.rustup.rs -sSf \| sh && source $HOME/.cargo/env`       |
+| `cargo test` fails with "no such file or directory" | Run from the contracts directory: `cd packages/contracts && cargo test` |
+| `stellar: command not found`                        | `cargo install --locked stellar-cli --features opt`                     |
 
 ---
 

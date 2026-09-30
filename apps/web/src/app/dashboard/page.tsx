@@ -5,6 +5,7 @@ import { LeftSidebar } from "../../components/dashboard/LeftSidebar";
 import { RightSidebar } from "../../components/dashboard/RightSidebar";
 import { DashboardHeader } from "../../components/dashboard/DashboardHeader";
 import { DashboardPostGrid } from "../../components/dashboard/DashboardPostGrid";
+import { MobileTopTabs } from "../../components/dashboard/MobileTopTabs";
 
 export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(false);
@@ -13,6 +14,7 @@ export default function DashboardPage() {
 
   return (
     <div
+      className="dashboard-layout"
       style={{
         display: "flex",
         minHeight: "100vh",
@@ -22,7 +24,7 @@ export default function DashboardPage() {
         overflowX: "hidden",
       }}
     >
-      {/* 1. Left Sidebar Column (240px / collapsible) */}
+      {/* 1. Left Sidebar Column (240px / collapsible) — hidden on mobile via CSS */}
       <LeftSidebar />
 
       {/* 2. Main Content Area Column (Background #0F172A) */}
@@ -34,8 +36,14 @@ export default function DashboardPage() {
           display: "flex",
           flexDirection: "column",
           overflowY: "auto",
+          /* Prevent main from growing wider than viewport minus sidebar */
+          minWidth: 0,
+          overflowX: "hidden",
         }}
       >
+        {/* Mobile top tabs — shown only on mobile via CSS, replaces LeftSidebar */}
+        <MobileTopTabs />
+
         <DashboardHeader isLoading={isLoading} onToggleLoading={toggleLoading} />
         <DashboardPostGrid isLoading={isLoading} />
       </main>
