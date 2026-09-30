@@ -1,5 +1,6 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 
 import { useTheme } from "../theme/useTheme";
 
@@ -27,6 +28,11 @@ interface Props {
   onFollowingPress: () => void;
   onEditPress: () => void;
   onToggleFollow: () => void;
+  /**
+   * How long (ms) the "Copied!" label stays visible after a successful copy.
+   * @default 1500
+   */
+  copyFeedbackDuration?: number;
 }
 
 export default function ProfileHeader({
@@ -39,9 +45,18 @@ export default function ProfileHeader({
   onFollowingPress,
   onEditPress,
   onToggleFollow,
+  copyFeedbackDuration = 1500,
 }: Props) {
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyAddress = useCallback(async () => {
+    await Clipboard.setStringAsync(profile.address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), copyFeedbackDuration);
+  }, [profile.address, copyFeedbackDuration]);
 
   const shortAddress = `${profile.address.slice(0, 8)}…${profile.address.slice(-6)}`;
 
@@ -53,7 +68,32 @@ export default function ProfileHeader({
         </View>
         <View style={styles.meta}>
           <Text style={styles.username}>{profile.username ?? shortAddress}</Text>
-          <Text style={styles.address}>{shortAddress}</Text>
+          {/* Address row: truncated address + copy button */}
+          <View style={styles.addressRow}>
+            <Text
+              style={styles.address}
+              accessibilityLabel={`Address: ${profile.address}`}
+              testID="profile-address"
+              numberOfLines={1}
+            >
+              {shortAddress}
+            </Text>
+            <Pressable
+              onPress={handleCopyAddress}
+              accessibilityRole="button"
+              accessibilityLabel="Copy address to clipboard"
+              accessibilityState={{ checked: copied }}
+              testID="copy-address-btn"
+              style={({ pressed }) => [
+                styles.copyButton,
+                pressed && styles.copyButtonPressed,
+              ]}
+            >
+              <Text style={[styles.copyButtonText, copied && styles.copyButtonTextCopied]}>
+                {copied ? "✓ Copied!" : "Copy"}
+              </Text>
+            </Pressable>
+          </View>
           {profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
         </View>
         <View style={styles.actionWrap}>
@@ -140,6 +180,31 @@ function createStyles(theme: ReturnType<typeof useTheme>["theme"]) {
       color: theme.colors.text.secondary,
       fontFamily: "monospace",
       marginTop: 2,
+    },
+    addressRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginTop: 2,
+      gap: 6,
+    },
+    copyButton: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: theme.colors.surface.border,
+      backgroundColor: theme.colors.surface.surface1,
+    },
+    copyButtonPressed: {
+      opacity: 0.6,
+    },
+    copyButtonText: {
+      color: theme.colors.text.secondary,
+      fontSize: 11,
+      fontWeight: "600",
+    },
+    copyButtonTextCopied: {
+      color: theme.colors.brand.primary,
     },
     bio: {
       color: theme.colors.text.secondary,

@@ -22,6 +22,7 @@ import {
   dateRangeToLedgerRange,
   type AnalyticsData,
 } from "@/lib/analytics";
+import { CreatorOnboardingChecklist } from "@/components/dashboard/CreatorOnboardingChecklist";
 
 type DateRange = 7 | 30 | 90;
 type State =
@@ -106,6 +107,8 @@ export default function AnalyticsPage() {
   return (
     <div className="min-h-screen bg-[var(--bg-primary)]">
       <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+        <CreatorOnboardingChecklist />
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>

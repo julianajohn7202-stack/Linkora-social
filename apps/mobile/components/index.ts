@@ -10,3 +10,11 @@ export { MiniAppIcon } from "./MiniAppIcon";
 export { TipModal } from "./TipModal";
 export { AnalyticsCard } from "./AnalyticsCard";
 export type { MiniApp } from "./MiniAppIcon";
+export { ReputationBadge } from "./ReputationBadge";
+export type {
+  ReputationTier,
+  ReputationBadgeVariant,
+  ReputationBadgeProps,
+} from "./ReputationBadge";
+export { NotificationDetailSheet } from "./NotificationDetailSheet";
+export type { NotificationItem } from "./NotificationDetailSheet";

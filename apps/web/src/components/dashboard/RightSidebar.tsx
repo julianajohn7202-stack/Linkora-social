@@ -2,6 +2,32 @@
 
 import React, { useState, useEffect } from "react";
 import { fetchCreatorTokenPrice } from "@/lib/api";
+import { useCountUp } from "@/hooks/useCountUp";
+
+/** Renders a single animating stat number inside the Profile Stats card. */
+function AnimatedStat({ target, label }: { target: number; label: string }) {
+  const count = useCountUp(target);
+  const formatted = count.toLocaleString();
+  return (
+    <div style={{ textAlign: "center" }}>
+      <span
+        aria-label={`${label}: ${formatted}`}
+        style={{
+          display: "block",
+          color: "var(--text-primary, #F8FAFC)",
+          fontWeight: 700,
+          fontSize: "0.95rem",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {formatted}
+      </span>
+      <span style={{ color: "var(--text-secondary, #94A3B8)", fontSize: "0.75rem" }}>
+        {label}
+      </span>
+    </div>
+  );
+}
 
 const trendingTopics = [
   { tag: "#StellarSoroban", posts: "42.8K posts" },
@@ -166,7 +192,7 @@ export function RightSidebar() {
           enthusiast.
         </p>
 
-        {/* Profile Stats */}
+        {/* Profile Stats — numbers animate from 0 on mount (issue #191) */}
         <div
           style={{
             display: "flex",
@@ -177,53 +203,11 @@ export function RightSidebar() {
             border: "1px solid var(--border, #334155)",
           }}
         >
-          <div style={{ textAlign: "center" }}>
-            <span
-              style={{
-                display: "block",
-                color: "var(--text-primary, #F8FAFC)",
-                fontWeight: 700,
-                fontSize: "0.95rem",
-              }}
-            >
-              1,420
-            </span>
-            <span style={{ color: "var(--text-secondary, #94A3B8)", fontSize: "0.75rem" }}>
-              Followers
-            </span>
-          </div>
+          <AnimatedStat target={1420} label="Followers" />
           <div style={{ width: "1px", backgroundColor: "var(--border, #334155)" }} />
-          <div style={{ textAlign: "center" }}>
-            <span
-              style={{
-                display: "block",
-                color: "var(--text-primary, #F8FAFC)",
-                fontWeight: 700,
-                fontSize: "0.95rem",
-              }}
-            >
-              385
-            </span>
-            <span style={{ color: "var(--text-secondary, #94A3B8)", fontSize: "0.75rem" }}>
-              Following
-            </span>
-          </div>
+          <AnimatedStat target={385} label="Following" />
           <div style={{ width: "1px", backgroundColor: "var(--border, #334155)" }} />
-          <div style={{ textAlign: "center" }}>
-            <span
-              style={{
-                display: "block",
-                color: "var(--text-primary, #F8FAFC)",
-                fontWeight: 700,
-                fontSize: "0.95rem",
-              }}
-            >
-              94
-            </span>
-            <span style={{ color: "var(--text-secondary, #94A3B8)", fontSize: "0.75rem" }}>
-              Posts
-            </span>
-          </div>
+          <AnimatedStat target={94} label="Posts" />
         </div>
 
         {/* Action Buttons */}
