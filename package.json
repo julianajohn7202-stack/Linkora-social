@@ -29,6 +29,10 @@
     "turbo": "latest"
   },
   "lint-staged": {
+    "{packages,apps,services}/**/*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
     "*.{ts,tsx}": [
       "eslint --fix",
       "prettier --write"

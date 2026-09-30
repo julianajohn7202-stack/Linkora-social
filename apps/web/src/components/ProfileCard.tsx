@@ -12,13 +12,41 @@ export interface Profile {
 
 interface ProfileCardProps {
   profile: Profile;
+  /** When provided, matching terms in the display name are highlighted. */
+  query?: string;
 }
 
 function formatAddress(address: string): string {
   return address.length > 16 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
 }
 
-export function ProfileCard({ profile }: ProfileCardProps) {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightText(text: string, query = ""): React.ReactNode {
+  const trimmed = query.trim();
+  if (!trimmed) return text;
+
+  const parts = text.split(new RegExp(`(${escapeRegExp(trimmed)})`, "gi"));
+  return parts.map((part, index) =>
+    part.toLowerCase() === trimmed.toLowerCase() ? (
+      <mark
+        key={`${part}-${index}`}
+        className="rounded bg-yellow-300 px-0.5 text-black font-semibold"
+        // Keep highlight semantically neutral for screen readers — the
+        // surrounding accessible name already conveys the full text.
+        aria-hidden={undefined}
+      >
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
+export function ProfileCard({ profile, query }: ProfileCardProps) {
   const [following, setFollowing] = useState(!!profile.isFollowing);
   const followers = profile.followerCount ?? profile.follower_count ?? 0;
   const displayName = profile.username || formatAddress(profile.address);
@@ -30,7 +58,9 @@ export function ProfileCard({ profile }: ProfileCardProps) {
       </div>
 
       <div className="min-w-0 flex-1">
-        <h2 className="truncate font-semibold text-[var(--foreground)]">{displayName}</h2>
+        <h2 className="truncate font-semibold text-[var(--foreground)]">
+          {highlightText(displayName, query)}
+        </h2>
         <p className="truncate text-sm text-[var(--text-muted)]" title={profile.address}>
           {formatAddress(profile.address)}
         </p>
