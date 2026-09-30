@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useWalletContext } from "@/components/WalletProvider";
 import { LinkoraClient, GovParameter, GovProposal, GovStatus } from "linkora-sdk";
+import { CharacterCounter } from "@/components/post/CharacterCounter";
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.NEXT_PUBLIC_CONTRACT_ID ?? "";
@@ -10,21 +11,6 @@ const CONTRACT_ID = process.env.NEXT_PUBLIC_CONTRACT_ID ?? "";
 type ProposalWithQuorum = GovProposal & { effectiveQuorum: number };
 const GOVERNANCE_PARAMETERS = Object.values(GovParameter) as GovParameter[];
 const PAGE_SIZE = 10;
-
-// ── Shared Client Instance ───────────────────────────────────────────────────
-// Hoist a single LinkoraClient to module scope so all handlers reuse one client
-// and one underlying rpc.Server connection, avoiding per-action overhead.
-const client = new LinkoraClient({ rpcUrl: RPC_URL, contractId: CONTRACT_ID });
-
-// ── Shared Client Instance ───────────────────────────────────────────────────
-// Hoist a single LinkoraClient to module scope so all handlers reuse one client
-// and one underlying rpc.Server connection, avoiding per-action overhead.
-const client = new LinkoraClient({ rpcUrl: RPC_URL, contractId: CONTRACT_ID });
-
-// ── Shared Client Instance ───────────────────────────────────────────────────
-// Hoist a single LinkoraClient to module scope so all handlers reuse one client
-// and one underlying rpc.Server connection, avoiding per-action overhead.
-const client = new LinkoraClient({ rpcUrl: RPC_URL, contractId: CONTRACT_ID });
 
 // ── Shared Client Instance ───────────────────────────────────────────────────
 // Hoist a single LinkoraClient to module scope so all handlers reuse one client
@@ -45,7 +31,14 @@ export default function GovernancePage() {
   // Form state
   const [formParam, setFormParam] = useState<GovParameter>(GovParameter.FeeBps);
   const [formValue, setFormValue] = useState<string>("");
+  const [formDescription, setFormDescription] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Vote loading state: tracks the proposal ID currently being voted on
+  // and which direction (true = for, false = against) was clicked.
+  const [votingProposalId, setVotingProposalId] = useState<bigint | null>(null);
+  const [votingSupport, setVotingSupport] = useState<boolean | null>(null);
+  const [voteErrors, setVoteErrors] = useState<Record<string, string>>({});
 
   const fetchProposals = async (targetPage: number = 1) => {
     if (!CONTRACT_ID) return;
@@ -104,6 +97,7 @@ export default function GovernancePage() {
     try {
       await client.govPropose(address, formParam, BigInt(formValue), null);
       setFormValue("");
+      setFormDescription("");
       await fetchProposals();
     } catch (error) {
       console.error("Failed to propose", error);
@@ -115,12 +109,30 @@ export default function GovernancePage() {
 
   const handleVote = async (proposalId: bigint, support: boolean) => {
     if (!address || !CONTRACT_ID) return;
+    // Prevent double-submission
+    if (votingProposalId !== null) return;
+
+    const key = proposalId.toString();
+    setVotingProposalId(proposalId);
+    setVotingSupport(support);
+    // Clear any previous error for this proposal
+    setVoteErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+
     try {
       await client.govVote(address, proposalId, support);
       await fetchProposals();
     } catch (error) {
       console.error("Failed to vote", error);
-      alert("Failed to vote");
+      const message =
+        error instanceof Error ? error.message : "Failed to submit vote. Please try again.";
+      setVoteErrors((prev) => ({ ...prev, [key]: message }));
+    } finally {
+      setVotingProposalId(null);
+      setVotingSupport(null);
     }
   };
 
@@ -184,7 +196,10 @@ export default function GovernancePage() {
                 executedProposals.map((p) => (
                   <div
                     key={p.id.toString()}
-                    className="flex justify-between items-center p-4 border border-[var(--border)] rounded-xl bg-[var(--muted)]/40"
+                    tabIndex={0}
+                    role="article"
+                    aria-label={`Executed proposal: ${p.parameter} changed to ${p.new_value.toString()}`}
+                    className="flex justify-between items-center p-4 border border-[var(--border)] rounded-xl bg-[var(--muted)]/40 transition-all duration-200 hover:border-violet-500/60 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
                   >
                     <div>
                       <p className="font-semibold text-[var(--foreground)]">{p.parameter}</p>
@@ -209,7 +224,10 @@ export default function GovernancePage() {
                 displayedProposals.map((p) => (
                   <div
                     key={p.id.toString()}
-                    className="border border-[var(--border)] rounded-xl p-5 bg-[var(--background)] shadow-sm"
+                    tabIndex={0}
+                    role="article"
+                    aria-label={`Proposal #${p.id.toString()}: Update ${p.parameter}`}
+                    className="border border-[var(--border)] rounded-xl p-5 bg-[var(--background)] shadow-sm transition-all duration-200 hover:border-violet-500/60 hover:shadow-violet-950/20 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
                   >
                     <div className="flex justify-between items-start mb-4">
                       <div>
@@ -251,19 +269,99 @@ export default function GovernancePage() {
                       </div>
 
                       {connected && p.status === GovStatus.Active && (
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => handleVote(p.id, true)}
-                            className="flex-1 sm:flex-none px-4 py-2 bg-green-600/20 text-green-500 hover:bg-green-600/30 border border-green-600/50 rounded-lg transition-colors text-sm font-medium"
-                          >
-                            Vote For
-                          </button>
-                          <button
-                            onClick={() => handleVote(p.id, false)}
-                            className="flex-1 sm:flex-none px-4 py-2 bg-red-600/20 text-red-500 hover:bg-red-600/30 border border-red-600/50 rounded-lg transition-colors text-sm font-medium"
-                          >
-                            Vote Against
-                          </button>
+                        <div className="flex flex-col gap-2 items-end">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => handleVote(p.id, true)}
+                              disabled={votingProposalId !== null}
+                              aria-busy={votingProposalId === p.id && votingSupport === true}
+                              className="flex-1 sm:flex-none px-4 py-2 bg-green-600/20 text-green-500 hover:bg-green-600/30 border border-green-600/50 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                              {votingProposalId === p.id && votingSupport === true ? (
+                                <>
+                                  <svg
+                                    className="animate-spin h-4 w-4 text-green-400"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    aria-hidden="true"
+                                  >
+                                    <circle
+                                      className="opacity-25"
+                                      cx="12"
+                                      cy="12"
+                                      r="10"
+                                      stroke="currentColor"
+                                      strokeWidth="4"
+                                    />
+                                    <path
+                                      className="opacity-75"
+                                      fill="currentColor"
+                                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                                    />
+                                  </svg>
+                                  Submitting…
+                                </>
+                              ) : (
+                                "Vote For"
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handleVote(p.id, false)}
+                              disabled={votingProposalId !== null}
+                              aria-busy={votingProposalId === p.id && votingSupport === false}
+                              className="flex-1 sm:flex-none px-4 py-2 bg-red-600/20 text-red-500 hover:bg-red-600/30 border border-red-600/50 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                              {votingProposalId === p.id && votingSupport === false ? (
+                                <>
+                                  <svg
+                                    className="animate-spin h-4 w-4 text-red-400"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    aria-hidden="true"
+                                  >
+                                    <circle
+                                      className="opacity-25"
+                                      cx="12"
+                                      cy="12"
+                                      r="10"
+                                      stroke="currentColor"
+                                      strokeWidth="4"
+                                    />
+                                    <path
+                                      className="opacity-75"
+                                      fill="currentColor"
+                                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                                    />
+                                  </svg>
+                                  Submitting…
+                                </>
+                              ) : (
+                                "Vote Against"
+                              )}
+                            </button>
+                          </div>
+                          {/* Status text while vote is pending */}
+                          {votingProposalId === p.id && (
+                            <p
+                              className="text-xs text-violet-400 animate-pulse"
+                              role="status"
+                              aria-live="polite"
+                            >
+                              Submitting vote…
+                            </p>
+                          )}
+                          {/* Error message if vote failed */}
+                          {voteErrors[p.id.toString()] && (
+                            <p
+                              className="text-xs text-red-400 mt-1"
+                              role="alert"
+                              aria-live="assertive"
+                            >
+                              {voteErrors[p.id.toString()]}
+                            </p>
+                          )}
                         </div>
                       )}
 
@@ -342,6 +440,33 @@ export default function GovernancePage() {
                     onChange={(e) => setFormValue(e.target.value)}
                     className="w-full bg-[var(--muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-violet-500/50"
                     placeholder="1000"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="proposal-description"
+                    className="block text-sm font-medium text-[var(--text-muted)] mb-1"
+                  >
+                    Description
+                  </label>
+                  <textarea
+                    id="proposal-description"
+                    rows={4}
+                    value={formDescription}
+                    onChange={(e) => setFormDescription(e.target.value)}
+                    maxLength={600}
+                    aria-describedby="proposal-description-counter"
+                    className="w-full resize-none bg-[var(--muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-violet-500/50 placeholder:text-[var(--text-muted)]"
+                    placeholder="Explain why this parameter change is needed…"
+                  />
+                  <CharacterCounter
+                    id="proposal-description-counter"
+                    value={formDescription}
+                    max={500}
+                    amberAt={80}
+                    redAt={100}
+                    className="mt-1 text-right"
                   />
                 </div>
 

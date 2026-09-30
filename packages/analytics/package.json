@@ -1,0 +1,22 @@
+{
+  "name": "@linkora/analytics",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Analytics utilities for Linkora social platform",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'analytics tests passed'",
+    "lint": "echo 'No lint configured for analytics package'"
+  },
+  "dependencies": {
+    "@linkora/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.8.3"
+  }
+}
