@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build Docker image — ${{ matrix.service }}
         run: |
@@ -37,7 +37,7 @@ jobs:
 
       # ── Scan: fail CI on CRITICAL vulnerabilities ──────────────────────────
       - name: Trivy scan — CRITICAL (fail on detection)
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: linkora/${{ matrix.service }}:ci-${{ github.sha }}
           format: table
@@ -49,7 +49,7 @@ jobs:
       # ── Scan: warn on HIGH vulnerabilities (no failure) ───────────────────
       - name: Trivy scan — HIGH (warning only, upload SARIF)
         if: always()   # run even when the CRITICAL step failed
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: linkora/${{ matrix.service }}:ci-${{ github.sha }}
           format: sarif
@@ -61,7 +61,7 @@ jobs:
       # ── Upload SARIF to GitHub Security tab ───────────────────────────────
       - name: Upload SARIF results
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-${{ matrix.service }}-high.sarif
           category: trivy-${{ matrix.service }}
@@ -69,7 +69,7 @@ jobs:
       # ── Upload full JSON report as CI artifact ─────────────────────────────
       - name: Trivy scan — full JSON report (artifact)
         if: always()
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: linkora/${{ matrix.service }}:ci-${{ github.sha }}
           format: json
@@ -80,7 +80,7 @@ jobs:
 
       - name: Upload Trivy report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-report-${{ matrix.service }}-${{ github.sha }}
           path: trivy-${{ matrix.service }}-report.json
