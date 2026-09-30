@@ -1,5 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
 
 import { PoolRow, PoolSearchResult } from "../../components/PoolRow";
@@ -12,6 +21,8 @@ import { ProfileCardSkeleton } from "../../components/skeletons/ProfileCardSkele
 import { useTheme } from "../../theme/useTheme";
 
 const DEBOUNCE_MS = 300;
+
+// ─── Static sample data ───────────────────────────────────────────────────────
 
 const PROFILES: ProfileSearchResult[] = [
   {
@@ -61,12 +72,46 @@ const POOLS: PoolSearchResult[] = [
   },
 ];
 
+// Sample hashtag data – in production these would come from the search API
+interface HashtagResult {
+  tag: string;
+  postCount: number;
+}
+
+const HASHTAGS: HashtagResult[] = [
+  { tag: "#StellarFi", postCount: 1240 },
+  { tag: "#Soroban", postCount: 892 },
+  { tag: "#CreatorEconomy", postCount: 654 },
+  { tag: "#DeFi", postCount: 503 },
+  { tag: "#NFT", postCount: 318 },
+];
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type TabKey = "all" | "posts" | "profiles" | "hashtags";
+
+interface TabConfig {
+  key: TabKey;
+  label: string;
+}
+
+const TABS: TabConfig[] = [
+  { key: "all", label: "All" },
+  { key: "posts", label: "Posts" },
+  { key: "profiles", label: "Profiles" },
+  { key: "hashtags", label: "Hashtags" },
+];
+
 interface SearchResults {
   profiles: ProfileSearchResult[];
   pools: PoolSearchResult[];
+  hashtags: HashtagResult[];
 }
 
-function matchesQuery(value: string, query: string): boolean {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function matchesQuery(value: string | undefined | null, query: string): boolean {
+  if (!value) return false;
   return value.toLowerCase().includes(query);
 }
 
@@ -74,7 +119,7 @@ async function searchCatalog(query: string): Promise<SearchResults> {
   const normalized = query.trim().toLowerCase();
 
   if (!normalized) {
-    return { profiles: [], pools: [] };
+    return { profiles: [], pools: [], hashtags: [] };
   }
 
   return {
@@ -88,38 +133,200 @@ async function searchCatalog(query: string): Promise<SearchResults> {
         matchesQuery(value, normalized)
       )
     ),
+    hashtags: HASHTAGS.filter((h) => matchesQuery(h.tag, normalized)),
   };
 }
+
+// ─── TabBar ───────────────────────────────────────────────────────────────────
+
+interface TabBarProps {
+  activeTab: TabKey;
+  onTabChange: (tab: TabKey) => void;
+  counts: Record<TabKey, number>;
+  theme: ReturnType<typeof useTheme>["theme"];
+}
+
+function TabBar({ activeTab, onTabChange, counts, theme }: TabBarProps) {
+  // Animated indicator
+  const indicatorAnim = useRef(new Animated.Value(0)).current;
+  const tabWidths = useRef<Record<string, number>>({}).current;
+  const tabOffsets = useRef<Record<string, number>>({}).current;
+
+  const activeIndex = TABS.findIndex((t) => t.key === activeTab);
+
+  // Animate underline indicator when tab changes
+  useEffect(() => {
+    const offset = tabOffsets[activeTab] ?? 0;
+    const width = tabWidths[activeTab] ?? 0;
+    Animated.spring(indicatorAnim, {
+      toValue: offset + width / 2,
+      useNativeDriver: true,
+      tension: 300,
+      friction: 30,
+    }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const styles = useMemo(() => createTabBarStyles(theme), [theme]);
+
+  return (
+    <View style={styles.container} accessibilityRole="tablist">
+      {TABS.map((tab, index) => {
+        const isActive = tab.key === activeTab;
+        const count = counts[tab.key];
+
+        return (
+          <Pressable
+            key={tab.key}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
+            accessibilityLabel={`${tab.label} tab, ${count} results`}
+            onLayout={(e) => {
+              tabWidths[tab.key] = e.nativeEvent.layout.width;
+              tabOffsets[tab.key] = e.nativeEvent.layout.x;
+              // Initialise the indicator position on the first render
+              if (tab.key === activeTab) {
+                indicatorAnim.setValue(
+                  e.nativeEvent.layout.x + e.nativeEvent.layout.width / 2
+                );
+              }
+            }}
+            onPress={() => onTabChange(tab.key)}
+            style={[styles.tab, isActive && styles.activeTab]}
+          >
+            <View style={styles.tabContent}>
+              <Text style={[styles.tabLabel, isActive && styles.activeTabLabel]}>
+                {tab.label}
+              </Text>
+              {count > 0 && (
+                <View
+                  style={[styles.countBadge, isActive && styles.activeCountBadge]}
+                >
+                  <Text
+                    style={[styles.countText, isActive && styles.activeCountText]}
+                  >
+                    {count}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </Pressable>
+        );
+      })}
+
+      {/* Animated underline indicator */}
+      <Animated.View
+        style={[
+          styles.indicator,
+          {
+            transform: [
+              {
+                translateX: Animated.subtract(
+                  indicatorAnim,
+                  new Animated.Value(20) // half the indicator width
+                ),
+              },
+            ],
+          },
+        ]}
+      />
+    </View>
+  );
+}
+
+function createTabBarStyles(theme: ReturnType<typeof useTheme>["theme"]) {
+  return StyleSheet.create({
+    container: {
+      flexDirection: "row",
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.surface.border,
+      backgroundColor: theme.colors.surface.background,
+      position: "relative",
+    },
+    tab: {
+      flex: 1,
+      paddingVertical: 12,
+      alignItems: "center",
+    },
+    activeTab: {},
+    tabContent: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+    },
+    tabLabel: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: theme.colors.text.secondary,
+    },
+    activeTabLabel: {
+      color: theme.colors.brand.primary,
+      fontWeight: "700",
+    },
+    countBadge: {
+      minWidth: 18,
+      height: 18,
+      paddingHorizontal: 5,
+      borderRadius: 9,
+      backgroundColor: theme.colors.surface.surface2,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    activeCountBadge: {
+      backgroundColor: theme.colors.brand.primaryLight ?? theme.colors.brand.primary + "22",
+    },
+    countText: {
+      fontSize: 10,
+      fontWeight: "700",
+      color: theme.colors.text.secondary,
+    },
+    activeCountText: {
+      color: theme.colors.brand.primary,
+    },
+    indicator: {
+      position: "absolute",
+      bottom: 0,
+      width: 40,
+      height: 2,
+      borderRadius: 1,
+      backgroundColor: theme.colors.brand.primary,
+    },
+  });
+}
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function ExploreScreen() {
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
+
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [results, setResults] = useState<SearchResults>({
     profiles: [],
     pools: [],
+    hashtags: [],
   });
+  const [activeTab, setActiveTab] = useState<TabKey>("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchNonce, setSearchNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    setSearchNonce((current) => current + 1);
-    setRefreshing(false);
-  }, []);
+  // Refs for section scroll
+  const scrollViewRef = useRef<ScrollView>(null);
+  const sectionOffsets = useRef<Record<string, number>>({}).current;
 
+  // Debounce
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(query);
     }, DEBOUNCE_MS);
-
     return () => clearTimeout(timer);
   }, [query]);
 
+  // Run search
   useEffect(() => {
     let cancelled = false;
 
@@ -135,7 +342,7 @@ export default function ExploreScreen() {
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Search failed");
-          setResults({ profiles: [], pools: [] });
+          setResults({ profiles: [], pools: [], hashtags: [] });
         }
       } finally {
         if (!cancelled) {
@@ -145,27 +352,87 @@ export default function ExploreScreen() {
     }
 
     runSearch();
-
     return () => {
       cancelled = true;
     };
   }, [debouncedQuery, searchNonce]);
 
-  const hasQuery = debouncedQuery.trim().length > 0;
-  const hasResults = results.profiles.length > 0 || results.pools.length > 0;
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setSearchNonce((n) => n + 1);
+    setRefreshing(false);
+  }, []);
 
-  const resultSummary = useMemo(() => {
-    const total = results.profiles.length + results.pools.length;
-    return total === 1 ? "1 result" : `${total} results`;
-  }, [results]);
+  // Tab counts
+  const tabCounts = useMemo<Record<TabKey, number>>(
+    () => ({
+      all: results.profiles.length + results.pools.length + results.hashtags.length,
+      posts: results.pools.length, // pools map to "posts" type in this context
+      profiles: results.profiles.length,
+      hashtags: results.hashtags.length,
+    }),
+    [results]
+  );
+
+  // Scroll to section when tab changes
+  const handleTabChange = useCallback(
+    (tab: TabKey) => {
+      setActiveTab(tab);
+      if (tab === "all") {
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+        return;
+      }
+      const sectionKey =
+        tab === "posts" ? "pools" : tab === "profiles" ? "profiles" : "hashtags";
+      const offset = sectionOffsets[sectionKey];
+      if (offset !== undefined) {
+        scrollViewRef.current?.scrollTo({ y: offset, animated: true });
+      }
+    },
+    [sectionOffsets]
+  );
+
+  const hasQuery = debouncedQuery.trim().length > 0;
+  const hasResults =
+    results.profiles.length > 0 ||
+    results.pools.length > 0 ||
+    results.hashtags.length > 0;
+
+  // Determine which sections to show based on active tab
+  const showProfiles = activeTab === "all" || activeTab === "profiles";
+  const showPosts = activeTab === "all" || activeTab === "posts";
+  const showHashtags = activeTab === "all" || activeTab === "hashtags";
+
+  const filteredProfiles = showProfiles ? results.profiles : [];
+  const filteredPools = showPosts ? results.pools : [];
+  const filteredHashtags = showHashtags ? results.hashtags : [];
+
+  const filteredHasResults =
+    filteredProfiles.length > 0 ||
+    filteredPools.length > 0 ||
+    filteredHashtags.length > 0;
 
   return (
     <View style={styles.container}>
       <SearchBar value={query} onChangeText={setQuery} />
 
+      {/* Tab bar — only visible while searching */}
+      {hasQuery && !loading && !error && (
+        <TabBar
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          counts={tabCounts}
+          theme={theme}
+        />
+      )}
+
       <ScrollView
+        ref={scrollViewRef}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={[styles.content, !hasResults && styles.centerContent]}
+        contentContainerStyle={[
+          styles.content,
+          !filteredHasResults && styles.centerContent,
+        ]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -181,18 +448,21 @@ export default function ExploreScreen() {
             <PoolCardSkeleton />
             <View style={styles.center}>
               <ActivityIndicator color={theme.colors.brand.primary} />
-              <Text style={styles.muted}>Searching...</Text>
+              <Text style={styles.muted}>Searching…</Text>
             </View>
           </View>
         ) : error ? (
-          <ErrorState message={error} onRetry={() => setSearchNonce((current) => current + 1)} />
+          <ErrorState
+            message={error}
+            onRetry={() => setSearchNonce((n) => n + 1)}
+          />
         ) : !hasQuery ? (
           <EmptyState
             icon="🔎"
             title="Search Linkora"
             subtitle="Find creators and community pools."
           />
-        ) : !hasResults ? (
+        ) : !filteredHasResults ? (
           <EmptyState
             icon="🧭"
             title="No matches"
@@ -200,22 +470,62 @@ export default function ExploreScreen() {
             actionLabel="Clear search"
             onAction={() => {
               setQuery("");
-              setSearchNonce((current) => current + 1);
+              setSearchNonce((n) => n + 1);
             }}
           />
         ) : (
           <>
-            <Text style={styles.summary}>{resultSummary}</Text>
-            {results.profiles.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Profiles</Text>
-                {results.profiles.map((profile) => (
+            {/* Profiles section */}
+            {filteredProfiles.length > 0 ? (
+              <View
+                style={styles.section}
+                onLayout={(e) => {
+                  sectionOffsets["profiles"] = e.nativeEvent.layout.y;
+                }}
+              >
+                <Text style={styles.sectionTitle}>
+                  Profiles{" "}
+                  <Text style={styles.sectionCount}>
+                    ({filteredProfiles.length})
+                  </Text>
+                </Text>
+                {filteredProfiles.map((profile) => (
                   <ProfileRow
                     key={profile.address}
                     profile={profile}
                     onPress={(item) =>
                       router.push(
-                        `/profile/${encodeURIComponent(item.address)}` as Parameters<
+                        `/profile/${encodeURIComponent(
+                          item.address
+                        )}` as Parameters<typeof router.push>[0]
+                      )
+                    }
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            {/* Pools / Posts section */}
+            {filteredPools.length > 0 ? (
+              <View
+                style={styles.section}
+                onLayout={(e) => {
+                  sectionOffsets["pools"] = e.nativeEvent.layout.y;
+                }}
+              >
+                <Text style={styles.sectionTitle}>
+                  Pools{" "}
+                  <Text style={styles.sectionCount}>
+                    ({filteredPools.length})
+                  </Text>
+                </Text>
+                {filteredPools.map((pool) => (
+                  <PoolRow
+                    key={pool.id}
+                    pool={pool}
+                    onPress={(item) =>
+                      router.push(
+                        `/pool/${encodeURIComponent(item.id)}` as Parameters<
                           typeof router.push
                         >[0]
                       )
@@ -225,19 +535,33 @@ export default function ExploreScreen() {
               </View>
             ) : null}
 
-            {results.pools.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Pools</Text>
-                {results.pools.map((pool) => (
-                  <PoolRow
-                    key={pool.id}
-                    pool={pool}
-                    onPress={(item) =>
-                      router.push(
-                        `/pool/${encodeURIComponent(item.id)}` as Parameters<typeof router.push>[0]
-                      )
-                    }
-                  />
+            {/* Hashtags section */}
+            {filteredHashtags.length > 0 ? (
+              <View
+                style={styles.section}
+                onLayout={(e) => {
+                  sectionOffsets["hashtags"] = e.nativeEvent.layout.y;
+                }}
+              >
+                <Text style={styles.sectionTitle}>
+                  Hashtags{" "}
+                  <Text style={styles.sectionCount}>
+                    ({filteredHashtags.length})
+                  </Text>
+                </Text>
+                {filteredHashtags.map((item) => (
+                  <Pressable
+                    key={item.tag}
+                    style={styles.hashtagRow}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Hashtag ${item.tag}, ${item.postCount} posts`}
+                    onPress={() => setQuery(item.tag.replace("#", ""))}
+                  >
+                    <Text style={styles.hashtagText}>{item.tag}</Text>
+                    <Text style={styles.hashtagCount}>
+                      {item.postCount} posts
+                    </Text>
+                  </Pressable>
                 ))}
               </View>
             ) : null}
@@ -275,17 +599,8 @@ function createStyles(theme: ReturnType<typeof useTheme>["theme"]) {
       fontSize: 13,
       marginTop: 10,
     },
-    summary: {
-      color: theme.colors.text.secondary,
-      fontSize: 12,
-      fontWeight: "700",
-      marginHorizontal: 16,
-      marginTop: 8,
-      marginBottom: 8,
-      textTransform: "uppercase",
-    },
     section: {
-      marginTop: 8,
+      marginTop: 12,
     },
     sectionTitle: {
       color: theme.colors.text.primary,
@@ -295,29 +610,28 @@ function createStyles(theme: ReturnType<typeof useTheme>["theme"]) {
       marginBottom: 4,
       textTransform: "uppercase",
     },
-    miniAppsContainer: {
+    sectionCount: {
+      color: theme.colors.text.secondary,
+      fontWeight: "600",
+      textTransform: "none",
+    },
+    hashtagRow: {
       flexDirection: "row",
-      flexWrap: "wrap",
-      paddingHorizontal: 12,
-      paddingBottom: 16,
-    },
-    discoveryCard: {
-      width: "30%",
       alignItems: "center",
-      marginVertical: 8,
-      marginHorizontal: "1.5%",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.surface.border,
     },
-    installButton: {
-      marginTop: 4,
-      backgroundColor: theme.colors.brand.primary,
-      paddingHorizontal: 12,
-      paddingVertical: 4,
-      borderRadius: 6,
-    },
-    installButtonText: {
-      color: theme.colors.text.onBrand,
-      fontSize: 11,
+    hashtagText: {
+      fontSize: 15,
       fontWeight: "700",
+      color: theme.colors.brand.primary,
+    },
+    hashtagCount: {
+      fontSize: 12,
+      color: theme.colors.text.secondary,
     },
   });
 }
