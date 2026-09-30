@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useNotifications, Notification } from "@/hooks/useNotifications";
 import { useWalletContext } from "@/components/WalletProvider";
@@ -34,6 +34,8 @@ function buildMessage(notification: Notification): React.ReactNode {
   switch (type) {
     case "follow":
       return <>{actorLink} started following you</>;
+    case "mention":
+      return <>{actorLink} mentioned you</>;
     case "like":
       return (
         <>
@@ -140,10 +142,46 @@ function groupByDate(notifications: Notification[]): DateGroup[] {
   return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
 }
 
+const FILTERS = [
+  { value: "all", label: "All" },
+  { value: "follows", label: "Follows" },
+  { value: "tips", label: "Tips" },
+  { value: "mentions", label: "Mentions" },
+  { value: "governance", label: "Governance" },
+] as const;
+
+type NotificationFilter = (typeof FILTERS)[number]["value"];
+
+function matchesFilter(notification: Notification, filter: NotificationFilter): boolean {
+  switch (filter) {
+    case "follows":
+      return notification.type === "follow";
+    case "tips":
+      return notification.type === "tip";
+    case "mentions":
+      return notification.type === "mention";
+    case "governance":
+      return notification.type === "governance";
+    default:
+      return true;
+  }
+}
+
 export default function NotificationsPage() {
   const { address, connected } = useWalletContext();
   const { notifications, hasMore, markAllRead, markRead, loadMore } = useNotifications();
   const [markAllReadClicked, setMarkAllReadClicked] = useState(false);
+  const [filter, setFilter] = useState<NotificationFilter>("all");
+
+  useEffect(() => {
+    const syncFilterFromUrl = () => {
+      const requested = new URLSearchParams(window.location.search).get("type");
+      setFilter(FILTERS.some(({ value }) => value === requested) ? requested as NotificationFilter : "all");
+    };
+    syncFilterFromUrl();
+    window.addEventListener("popstate", syncFilterFromUrl);
+    return () => window.removeEventListener("popstate", syncFilterFromUrl);
+  }, []);
 
   if (!connected || !address) {
     return (
@@ -153,7 +191,15 @@ export default function NotificationsPage() {
     );
   }
 
-  const groups = groupByDate(notifications);
+  const filteredNotifications = notifications.filter((notification) => matchesFilter(notification, filter));
+  const groups = groupByDate(filteredNotifications);
+
+  const selectFilter = (nextFilter: NotificationFilter) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("type", nextFilter);
+    window.history.replaceState(window.history.state, "", url.toString());
+    setFilter(nextFilter);
+  };
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 md:py-8">
@@ -173,13 +219,33 @@ export default function NotificationsPage() {
         )}
       </div>
 
-      {notifications.length === 0 ? (
+      <div className="mb-5 flex gap-2 overflow-x-auto" role="group" aria-label="Filter notifications">
+        {FILTERS.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={filter === value}
+            onClick={() => selectFilter(value)}
+            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+              filter === value
+                ? "border-violet-500 bg-violet-600 text-white"
+                : "border-[var(--border)] text-[var(--text-muted)] hover:border-violet-500/60 hover:text-violet-400"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {filteredNotifications.length === 0 ? (
         <div
           className="rounded-xl border border-[var(--border)] bg-[var(--muted)]/40 px-6 py-12 text-center"
           data-testid="empty-state"
         >
           <p className="text-[var(--text-muted)]">
-            No activity yet. Share your profile to get followers.
+            {notifications.length === 0
+              ? "No activity yet. Share your profile to get followers."
+              : `No ${FILTERS.find(({ value }) => value === filter)?.label.toLowerCase()} notifications.`}
           </p>
         </div>
       ) : (

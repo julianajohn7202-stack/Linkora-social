@@ -1,4 +1,6 @@
 packages:
+  - "packages/reputation"
+  - "packages/analytics"
   - "packages/*"
   - "apps/*"
   - "services/*"

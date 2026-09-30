@@ -14,6 +14,7 @@ import {
 } from "@/lib/LinkoraEventSubscriber";
 import { FollowDrawer } from "@/components/profile/FollowDrawer";
 import { CreatorTokenPanel } from "@/components/profile/CreatorTokenPanel";
+import { CopyAddressButton } from "@/components/profile/CopyAddressButton";
 import {
   TransactionBuilder,
   BASE_FEE,
@@ -62,7 +63,6 @@ export default function ProfilePage() {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerType, setDrawerType] = useState<"followers" | "following">("followers");
-  const [copyFeedback, setCopyFeedback] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
@@ -241,14 +241,6 @@ export default function ProfilePage() {
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
 
-  /* ── Copy address ───────────────────────────────────────────────────── */
-
-  const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(address);
-    setCopyFeedback(true);
-    setTimeout(() => setCopyFeedback(false), 1500);
-  }, [address]);
-
   /* ── Drawer helpers ─────────────────────────────────────────────────── */
 
   const openDrawer = useCallback((type: "followers" | "following") => {
@@ -342,16 +334,8 @@ export default function ProfilePage() {
               {profile.username}
             </h1>
 
-            <p className="text-[var(--text-muted)] font-mono text-sm mt-1 flex items-center gap-2">
-              <span id="profile-address">{truncate(address)}</span>
-              <button
-                onClick={handleCopy}
-                aria-label="Copy address to clipboard"
-                className="hover:text-[var(--accent-teal)] transition-colors"
-                id="copy-address-btn"
-              >
-                {copyFeedback ? "✓ Copied" : "📋 Copy"}
-              </button>
+            <p className="text-[var(--text-muted)] font-mono text-sm mt-1">
+              <CopyAddressButton address={address} />
             </p>
 
             {/* Follower / following counts */}

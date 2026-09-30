@@ -271,7 +271,7 @@ export function SearchPageClient() {
           {!loading &&
             !error &&
             hasProfileResults &&
-            profiles.map((profile) => <ProfileCard key={profile.address} profile={profile} />)}
+            profiles.map((profile) => <ProfileCard key={profile.address} profile={profile} query={query} />)}
           {!loading && !error && !hasProfileResults && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--muted)] p-8 text-center text-[var(--text-muted)]">
               No profiles found for &quot;{query}&quot;.
