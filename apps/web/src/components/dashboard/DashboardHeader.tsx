@@ -21,10 +21,20 @@ export function DashboardHeader({ isLoading, onToggleLoading }: DashboardHeaderP
         padding: "24px 24px 16px 24px",
         borderBottom: "1px solid var(--border, #334155)",
         backgroundColor: "var(--bg-primary, #0B1120)",
+        overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: "16px",
+          flexWrap: "wrap",
+        }}
+      >
+        {/* Title & Subtitle */}
+        <div className="dashboard-header-title" style={{ minWidth: 0, flex: "1 1 200px" }}>
           <h1
             style={{
               margin: 0,
@@ -32,6 +42,7 @@ export function DashboardHeader({ isLoading, onToggleLoading }: DashboardHeaderP
               fontSize: "1.75rem",
               fontWeight: 800,
               letterSpacing: "-0.03em",
+              wordBreak: "break-word",
             }}
           >
             Daskloode
@@ -48,7 +59,16 @@ export function DashboardHeader({ isLoading, onToggleLoading }: DashboardHeaderP
         </div>
 
         {/* Skeleton Toggle Button & Create Action */}
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <div
+          className="dashboard-header-actions"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            flexShrink: 0,
+            flexWrap: "wrap",
+          }}
+        >
           <button
             onClick={onToggleLoading}
             style={{
@@ -60,6 +80,7 @@ export function DashboardHeader({ isLoading, onToggleLoading }: DashboardHeaderP
               fontSize: "0.85rem",
               fontWeight: 500,
               cursor: "pointer",
+              whiteSpace: "nowrap",
             }}
           >
             {isLoading ? "Show Posts" : "Skeleton View"}
@@ -75,6 +96,7 @@ export function DashboardHeader({ isLoading, onToggleLoading }: DashboardHeaderP
               fontWeight: 600,
               cursor: "pointer",
               boxShadow: "0 4px 12px rgba(96, 165, 250, 0.25)",
+              whiteSpace: "nowrap",
             }}
           >
             + Create Post
@@ -83,7 +105,14 @@ export function DashboardHeader({ isLoading, onToggleLoading }: DashboardHeaderP
       </div>
 
       {/* Sub-Navigation Tabs */}
-      <nav style={{ display: "flex", gap: "8px", overflowX: "auto" }}>
+      <nav
+        style={{
+          display: "flex",
+          gap: "8px",
+          overflowX: "auto",
+          scrollbarWidth: "none",
+        }}
+      >
         {subNavTabs.map((tab) => {
           const isActive = activeTab === tab;
           return (
@@ -105,6 +134,7 @@ export function DashboardHeader({ isLoading, onToggleLoading }: DashboardHeaderP
                 cursor: "pointer",
                 transition: "all 0.2s ease",
                 whiteSpace: "nowrap",
+                flexShrink: 0,
               }}
             >
               {tab}
