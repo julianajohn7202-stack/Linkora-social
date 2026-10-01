@@ -612,7 +612,7 @@ same `report_cbor` is rejected as `"attestation already submitted"`.
 
 ### Sequence diagram — oracle → attest → creator reward
 
-```
+````
 Analytics Oracle         LinkoraContract           Indexer / Distribution
       |                        |                           |
       | -- register_oracle()-->|                           |
@@ -669,7 +669,7 @@ const client = new LinkoraClient({
 // Read the pool config to find the current threshold
 const pool = await client.getPool("my-pool-1");
 console.log(`Pool threshold: ${pool.threshold} of ${pool.admins.length} admins required`);
-```
+````
 
 ---
 
@@ -870,9 +870,17 @@ async function withdrawFromPool(
 
 ## Moderation
 
-The moderation module provides stake-backed post reporting and moderator-reviewed verdicts.
-There are no bans or per-user blocks in the moderation system — it operates at the post
-level. Account-level blocking is handled separately via `block_user` / `unblock_user`.
+The moderation module covers two distinct mechanisms:
+
+1. **Post-level moderation** — stake-backed reporting and moderator-reviewed verdicts that
+   can remove posts and slash author tokens.
+2. **User-level blocking** — any user can block another user, which immediately severs their
+   follow graph and prevents follows, tips, and likes across the block boundary.
+
+There are no protocol-level account bans (e.g. a site-wide ban issued by an admin). The
+closest equivalent is the block system described in [User blocking (ban mechanics)](#user-blocking-ban-mechanics) below.
+
+---
 
 ### Overview
 
@@ -882,6 +890,8 @@ level. Account-level blocking is handled separately via `block_user` / `unblock_
    may be slashed (if `MODERATION_SLASH_BPS > 0`), and the reporter's stake is returned.
 4. If the verdict is **Dismissed**: the reporter's stake is sent to the treasury.
 
+---
+
 ### Report reason codes
 
 Reports carry a `reason_hash: BytesN<32>` — the SHA-256 of the off-chain reason string.
@@ -889,13 +899,28 @@ The hash is stored on-chain; the raw reason text is stored off-chain (e.g. in th
 This keeps on-chain storage minimal while giving indexers a tamper-evident link to the
 full reason.
 
-Clients should compute:
+Clients must compute the hash before calling `report_post`:
 
 ```
 reason_hash = sha256(reason_text_utf8)
 ```
 
-The contract does not validate or interpret the hash contents.
+The contract does not validate or interpret the hash contents. Suggested reason strings
+for off-chain convention (not enforced on-chain):
+
+| Suggested reason string | Meaning                                                 |
+| ----------------------- | ------------------------------------------------------- |
+| `"spam"`                | Repetitive or unsolicited promotional content           |
+| `"harassment"`          | Targeted abuse or threatening language                  |
+| `"misinformation"`      | Demonstrably false claims presented as fact             |
+| `"illegal_content"`     | Content that may violate applicable law                 |
+| `"copyright"`           | Unauthorised reproduction of copyrighted material       |
+| `"other"`               | Any reason not covered above (include detail off-chain) |
+
+Store the raw string alongside the SHA-256 digest in the indexer so that
+moderators can read the reason when reviewing reports.
+
+---
 
 ### Report flow
 
@@ -918,12 +943,16 @@ Reporter                    Contract                       Moderator
    |                     stake → treasury                      |
 ```
 
+---
+
 ### Rate limits
 
 | Guard                           | Limit                                            |
 | ------------------------------- | ------------------------------------------------ |
 | Open reports per reporter       | 10 (enforced by `OpenReports(reporter)` counter) |
 | Reporter cannot report own post | validated in `validate_reporter_can_report`      |
+
+---
 
 ### Admin-only function table
 
@@ -934,13 +963,18 @@ Reporter                    Contract                       Moderator
 | `revoke_role`                      | `Admin`       | Admin address signs                                           | Revokes the `Moderator` role from an account.           |
 | `gov_execute` (ModerationSlashBps) | `Admin`       | Admin executes a passed governance proposal                   | Changes the slash percentage applied to upheld reports. |
 
+---
+
 ### Public functions
 
 | Function           | Signature                                               | Description                                                                                                                                                                            |
 | ------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `report_post`      | `(reporter, post_id, token, stake_amount, reason_hash)` | Files a report and locks `stake_amount` tokens in contract escrow. Panics if the post does not exist, reporter is the author, already reported, or the reporter has ≥ 10 open reports. |
+| `review_report`    | `(moderator, signers, post_id, reporter, verdict)`      | Issues a verdict on a pending report. Requires Moderator role and M-of-N mods pool co-signatures.                                                                                      |
 | `get_report`       | `(post_id, reporter) → Option<Report>`                  | Returns the `Report` struct for a given `(post_id, reporter)` pair, or `None`.                                                                                                         |
 | `get_report_count` | `(post_id) → u32`                                       | Returns the total number of reports filed against a post.                                                                                                                              |
+
+---
 
 ### Data types
 
@@ -964,6 +998,8 @@ Reporter                    Contract                       Moderator
 | `Upheld`    | Moderator ruled the post violated policy. Post deleted, stake returned to reporter. |
 | `Dismissed` | Moderator ruled the report invalid. Stake sent to treasury.                         |
 
+---
+
 ### How moderation affects other operations
 
 - A post deleted via `review_report` (verdict = Upheld) is removed from persistent storage
@@ -976,10 +1012,107 @@ Reporter                    Contract                       Moderator
 - The `MODERATION_SLASH_BPS` parameter is governed via the `ModerationSlashBps` governance
   proposal type and defaults to `0` (no slashing) at initialization.
 
-### Events emitted
+---
+
+### Events emitted (post moderation)
 
 | Event                          | Topics                | Fields         | Emitted when            |
 | ------------------------------ | --------------------- | -------------- | ----------------------- |
 | `PostReportedEvent`            | `post_id`, `reporter` | `stake_amount` | `report_post` succeeds. |
 | `PostRemovedByModerationEvent` | `post_id`, `reporter` | —              | Verdict = Upheld.       |
 | `ReportDismissedEvent`         | `post_id`, `reporter` | —              | Verdict = Dismissed.    |
+
+---
+
+## User blocking (ban mechanics)
+
+The contract provides a user-controlled blocking system. Any account can block
+any other account. Blocking is **bidirectional in effect**: once A blocks B,
+neither A nor B can follow, tip, or like across that boundary, regardless of
+which direction the action comes from.
+
+There is no admin-issued ban. Moderators can only remove posts via `review_report`.
+To prevent an account from interacting with the platform entirely, an admin would
+need to use off-chain tooling (e.g. a deny-list in the indexer or UI layer).
+
+### Block / unblock functions
+
+| Function       | Auth               | Inputs                                 | Returns |
+| -------------- | ------------------ | -------------------------------------- | ------- |
+| `block_user`   | caller (`blocker`) | `blocker: Address`, `blocked: Address` | `()`    |
+| `unblock_user` | caller (`blocker`) | `blocker: Address`, `blocked: Address` | `()`    |
+| `is_blocked`   | none               | `blocker: Address`, `blocked: Address` | `bool`  |
+
+### Block flow
+
+```
+User A                         Contract
+   |                               |
+   |-- block_user(A, B) ---------->|
+   |                               |  1. Records Blocks(A) → {B: ()}
+   |                               |  2. Records BlockedBy(B) → {A: ()}
+   |                               |  3. Removes A→B and B→A follow edges
+   |                               |  4. Removes cross-block like entries
+   |                               |  5. Emits BlockEvent{blocker: A, blocked: B}
+   |<-- (done) --------------------|
+```
+
+### Unblock flow
+
+```
+User A                         Contract
+   |                               |
+   |-- unblock_user(A, B) -------->|
+   |                               |  1. Removes B from Blocks(A)
+   |                               |  2. Removes A from BlockedBy(B)
+   |                               |  3. Emits UnblockEvent{blocker: A, blocked: B}
+   |<-- (done) --------------------|
+```
+
+Unblocking does **not** restore any follow edges that were removed when the block
+was created. Users must re-follow each other manually after unblocking.
+
+### How blocking affects follow, post, and tip operations
+
+The contract enforces a bidirectional block check (`is_either_blocked`) before
+allowing social interactions. Either party blocking the other is sufficient to
+reject the operation.
+
+| Operation     | Effect when a block exists between the two parties                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `follow`      | Panics with `"blocked: cannot follow — one user has blocked the other"`                                      |
+| `tip`         | Panics with `"blocked: cannot tip — one user has blocked the other"`                                         |
+| `like_post`   | Block check enforced via `cleanup_likes_on_block`; likes between blocked users are removed at block time     |
+| `report_post` | Reporter cannot report the post of a user who has blocked them (validated by `validate_reporter_can_report`) |
+| `create_post` | Not affected — a blocked user can still post; blocking is interaction-level, not account-level               |
+
+#### Follow graph cleanup on block
+
+When `block_user(A, B)` is called, the contract immediately removes any existing
+follow edges between A and B:
+
+- A's following list no longer includes B.
+- B's following list no longer includes A.
+- Follower counts for both parties are decremented accordingly.
+
+This cleanup is synchronous and happens inside the same `block_user` invocation.
+
+#### Reverse-index storage
+
+The contract maintains two storage keys per block relationship:
+
+| Storage key          | Value type         | Meaning                                       |
+| -------------------- | ------------------ | --------------------------------------------- |
+| `Blocks(blocker)`    | `Map<Address, ()>` | Set of addresses that `blocker` has blocked.  |
+| `BlockedBy(blocked)` | `Map<Address, ()>` | Set of addresses that have blocked `blocked`. |
+
+Both keys are kept in sync. `is_blocked(A, B)` reads only `Blocks(A)` and is therefore O(1).
+The reverse index `BlockedBy` is used by the indexer and UI to efficiently enumerate
+"who has blocked me?" without iterating over all blocker maps.
+
+### Events emitted (blocking)
+
+| Event          | Topics               | Fields | Emitted when             |
+| -------------- | -------------------- | ------ | ------------------------ |
+| `BlockEvent`   | `blocker`, `blocked` | —      | `block_user` succeeds.   |
+| `UnblockEvent` | `blocker`, `blocked` | —      | `unblock_user` succeeds. |
