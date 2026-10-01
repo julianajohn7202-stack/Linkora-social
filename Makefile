@@ -16,6 +16,31 @@ test:
 format:
 	@pnpm format
 
+# -----------------------------------------------------------------
+# Service targets
+# -----------------------------------------------------------------
+
+# Start the notification service in development mode.
+notification:
+	@pnpm --filter @linkora/notification dev
+
+# Start the search service in development mode.
+search:
+	@pnpm --filter @linkora/search dev
+
+# Start the media service in development mode.
+media:
+	@pnpm --filter @linkora/media dev
+
+# Start all services (indexer, dm-relay, analytics-oracle,
+# notification, search, media) in parallel.
+services:
+	@pnpm -r --filter './services/**' dev
+
+# Run tests for all services.
+test-services:
+	@pnpm --filter './services/**' test
+
 # Sync GitHub issue/PR labels from .github/labels.yml to the repository.
 # Requires the GITHUB_TOKEN env var (a token with repo scope). The target
 # repository is derived from the `origin` git remote.
