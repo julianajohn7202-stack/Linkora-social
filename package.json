@@ -16,19 +16,24 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@playwright/test": "^1.45.0",
+    "@playwright/test": "^1.63.0",
     "@stellar/stellar-sdk": "^15.1.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
+    "conventional-changelog-cli": "^5.0.0",
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "husky": "^9.1.7",
     "lint-staged": "^15.2.10",
-    "prettier": "^3.8.3",
+    "prettier": "^3.9.8",
     "ts-node": "^10.9.2",
     "turbo": "latest"
   },
   "lint-staged": {
+    "{packages,apps,services}/**/*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
     "*.{ts,tsx}": [
       "eslint --fix",
       "prettier --write"
@@ -41,5 +46,8 @@
     ]
   },
   "packageManager": "pnpm@9.15.9",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@noble/ciphers": "^0.5.3"
+  }
 }

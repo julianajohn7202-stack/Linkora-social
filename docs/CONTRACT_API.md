@@ -1,9 +1,187 @@
 # Linkora API Reference
 
-> **Scope note.** This document covers **HTTP request authentication** for the indexer's REST
-> API and the **Reputation / Post Scoring module**. The Soroban contract function reference,
-> complete storage layout, and event schema are not here yet — see `packages/contracts` and
-> the README API table in the meantime.
+---
+
+## Contract Function Quick-Reference
+
+The tables below list every public function on `LinkoraContract` grouped by module. Auth requirements use the following shorthand:
+
+- **caller** — the first `Address` argument calls `require_auth()` on itself.
+- **Admin role** — caller must hold the `Admin` role granted via `grant_role`.
+- **Upgrader role** — caller must hold the `Upgrader` role.
+- **Moderator role** — caller must hold the `Moderator` role.
+- **Multi-sig** — a `Vec<Address>` of signers all call `require_auth()`; must meet the pool's approval threshold.
+- **none** — read-only; no auth required.
+
+---
+
+### Initialisation & Access Control
+
+| Function      | Auth             | Inputs                                                | Returns |
+| ------------- | ---------------- | ----------------------------------------------------- | ------- |
+| `initialize`  | caller (`admin`) | `admin: Address`, `treasury: Address`, `fee_bps: u32` | `()`    |
+| `grant_role`  | Admin role       | `admin: Address`, `account: Address`, `role: Role`    | `()`    |
+| `revoke_role` | Admin role       | `admin: Address`, `account: Address`, `role: Role`    | `()`    |
+| `has_role`    | none             | `account: Address`, `role: Role`                      | `bool`  |
+
+---
+
+### Social — Profiles
+
+| Function                  | Auth            | Inputs                                                        | Returns           |
+| ------------------------- | --------------- | ------------------------------------------------------------- | ----------------- |
+| `set_profile`             | caller (`user`) | `user: Address`, `username: String`, `creator_token: Address` | `()`              |
+| `get_profile`             | none            | `user: Address`                                               | `Option<Profile>` |
+| `get_profile_count`       | none            | —                                                             | `u64`             |
+| `delete_profile`          | caller (`user`) | `user: Address`                                               | `()`              |
+| `batch_cleanup_profile`   | none            | `user: Address`, `max_entries: u32`                           | `()`              |
+| `get_address_by_username` | none            | `username: String`                                            | `Option<Address>` |
+
+---
+
+### Social — Follow Graph
+
+| Function               | Auth                | Inputs                                         | Returns        |
+| ---------------------- | ------------------- | ---------------------------------------------- | -------------- |
+| `follow`               | caller (`follower`) | `follower: Address`, `followee: Address`       | `()`           |
+| `unfollow`             | caller (`follower`) | `follower: Address`, `followee: Address`       | `()`           |
+| `get_following`        | none                | `user: Address`, `offset: u32`, `limit: u32`   | `Vec<Address>` |
+| `get_followers`        | none                | `user: Address`, `offset: u32`, `limit: u32`   | `Vec<Address>` |
+| `batch_follow`         | caller (`follower`) | `follower: Address`, `followees: Vec<Address>` | `()`           |
+| `batch_unfollow`       | caller (`follower`) | `follower: Address`, `followees: Vec<Address>` | `()`           |
+| `migrate_follow_graph` | Admin role          | `admin: Address`, `users: Vec<Address>`        | `()`           |
+| `block_user`           | caller (`blocker`)  | `blocker: Address`, `blocked: Address`         | `()`           |
+| `unblock_user`         | caller (`blocker`)  | `blocker: Address`, `blocked: Address`         | `()`           |
+| `is_blocked`           | none                | `blocker: Address`, `blocked: Address`         | `bool`         |
+
+---
+
+### Posts
+
+| Function              | Auth              | Inputs                                                              | Returns         |
+| --------------------- | ----------------- | ------------------------------------------------------------------- | --------------- |
+| `create_post`         | caller (`author`) | `author: Address`, `content: String`                                | `u64` (post ID) |
+| `get_post`            | none              | `id: u64`                                                           | `Option<Post>`  |
+| `get_post_count`      | none              | —                                                                   | `u64`           |
+| `delete_post`         | caller (`author`) | `author: Address`, `post_id: u64`                                   | `()`            |
+| `batch_cleanup_post`  | none              | `post_id: u64`, `max_entries: u32`                                  | `()`            |
+| `get_posts_by_author` | none              | `author: Address`, `offset: u32`, `limit: u32`                      | `Vec<u64>`      |
+| `like_post`           | caller (`user`)   | `user: Address`, `post_id: u64`                                     | `()`            |
+| `batch_like`          | caller (`user`)   | `user: Address`, `post_ids: Vec<u64>`                               | `()`            |
+| `get_like_count`      | none              | `post_id: u64`                                                      | `u64`           |
+| `has_liked`           | none              | `user: Address`, `post_id: u64`                                     | `bool`          |
+| `tip`                 | caller (`tipper`) | `tipper: Address`, `post_id: u64`, `token: Address`, `amount: i128` | `()`            |
+
+---
+
+### Pools
+
+| Function                | Auth                  | Inputs                                                                           | Returns                |
+| ----------------------- | --------------------- | -------------------------------------------------------------------------------- | ---------------------- |
+| `create_pool`           | caller (first signer) | `signers: Vec<Address>`, `pool_id: Symbol`, `token: Address`, `threshold: u32`   | `()`                   |
+| `pool_deposit`          | caller (`depositor`)  | `depositor: Address`, `pool_id: Symbol`, `token: Address`, `amount: i128`        | `()`                   |
+| `pool_withdraw`         | Multi-sig             | `signers: Vec<Address>`, `pool_id: Symbol`, `recipient: Address`, `amount: i128` | `()`                   |
+| `get_pool`              | none                  | `pool_id: Symbol`                                                                | `Option<Pool>`         |
+| `get_pool_admins`       | none                  | `pool_id: Symbol`                                                                | `Option<Vec<Address>>` |
+| `add_pool_admin`        | Multi-sig             | `signers: Vec<Address>`, `pool_id: Symbol`, `new_admin: Address`                 | `()`                   |
+| `remove_pool_admin`     | Multi-sig             | `signers: Vec<Address>`, `pool_id: Symbol`, `admin: Address`                     | `()`                   |
+| `update_pool_threshold` | Multi-sig             | `signers: Vec<Address>`, `pool_id: Symbol`, `threshold: u32`                     | `()`                   |
+
+---
+
+### Governance
+
+| Function           | Auth                | Inputs                                                                                                                                   | Returns             |
+| ------------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `gov_init_config`  | Admin role          | `admin: Address`, `quorum: u32`, `time_lock_ledgers: u32`, `vote_window_ledgers: u32`, `quorum_decay_rate_bps: u32`, `quorum_floor: u32` | `()`                |
+| `gov_get_config`   | none                | —                                                                                                                                        | `GovConfig`         |
+| `gov_propose`      | caller (`proposer`) | `proposer: Address`, `parameter: GovParameter`, `new_value: u64`, `new_address: Option<Address>`                                         | `u64` (proposal ID) |
+| `gov_vote`         | caller (`voter`)    | `voter: Address`, `proposal_id: u64`, `support: bool`                                                                                    | `()`                |
+| `effective_quorum` | none                | `proposal_id: u64`                                                                                                                       | `u32`               |
+| `gov_execute`      | Admin role          | `admin: Address`, `proposal_id: u64`                                                                                                     | `()`                |
+| `gov_veto`         | Multi-sig           | `signers: Vec<Address>`, `pool_id: Symbol`, `proposal_id: u64`                                                                           | `()`                |
+| `gov_get_proposal` | none                | `proposal_id: u64`                                                                                                                       | `GovProposal`       |
+
+---
+
+### Analytics Oracle
+
+| Function                       | Auth       | Inputs                                                               | Returns |
+| ------------------------------ | ---------- | -------------------------------------------------------------------- | ------- |
+| `register_oracle`              | Admin role | `admin: Address`, `name: Symbol`, `pubkey: BytesN<32>`               | `()`    |
+| `verify_analytics_attestation` | none       | `oracle_name: Symbol`, `report_cbor: Bytes`, `signature: BytesN<64>` | `()`    |
+
+---
+
+### Moderation
+
+| Function           | Auth                | Inputs                                                                                                 | Returns          |
+| ------------------ | ------------------- | ------------------------------------------------------------------------------------------------------ | ---------------- |
+| `report_post`      | caller (`reporter`) | `reporter: Address`, `post_id: u64`, `token: Address`, `stake_amount: i128`, `reason_hash: BytesN<32>` | `()`             |
+| `review_report`    | Moderator role      | `moderator: Address`, `post_id: u64`, `reporter: Address`, `verdict: ReportStatus`                     | `()`             |
+| `get_report`       | none                | `post_id: u64`, `reporter: Address`                                                                    | `Option<Report>` |
+| `get_report_count` | none                | `post_id: u64`                                                                                         | `u32`            |
+
+---
+
+### Protocol Parameters & Admin
+
+| Function                   | Auth        | Inputs                                    | Returns           |
+| -------------------------- | ----------- | ----------------------------------------- | ----------------- |
+| `set_fee`                  | Admin role  | `admin: Address`, `fee_bps: u32`          | `()`              |
+| `get_fee_bps`              | none        | —                                         | `u32`             |
+| `set_treasury`             | Admin role  | `admin: Address`, `treasury: Address`     | `()`              |
+| `get_treasury`             | none        | —                                         | `Option<Address>` |
+| `set_tip_cooldown_window`  | Admin role  | `admin: Address`, `cooldown_ledgers: u32` | `()`              |
+| `get_tip_cooldown_window`  | none        | —                                         | `u32`             |
+| `set_max_post_content_len` | Admin role  | `admin: Address`, `max_len: u32`          | `()`              |
+| `get_max_post_content_len` | none        | —                                         | `u32`             |
+| `set_max_bio_len`          | Admin role  | `admin: Address`, `max_len: u32`          | `()`              |
+| `get_max_bio_len`          | none        | —                                         | `u32`             |
+| `set_rent_rate_bps`        | Admin role  | `admin: Address`, `rate: u32`             | `()`              |
+| `get_rent_rate_bps`        | none        | —                                         | `u32`             |
+| `pause`                    | Pauser role | `admin: Address`                          | `()`              |
+| `unpause`                  | Pauser role | `admin: Address`                          | `()`              |
+
+---
+
+### Rent & Storage
+
+| Function                | Auth            | Inputs                                            | Returns                 |
+| ----------------------- | --------------- | ------------------------------------------------- | ----------------------- |
+| `pay_rent`              | caller (`user`) | `user: Address`, `token: Address`, `amount: i128` | `()`                    |
+| `get_rent_expiry`       | none            | `user: Address`                                   | `u32` (ledger sequence) |
+| `batch_bump_user_graph` | Admin role      | `admin: Address`, `user: Address`                 | `u32` (keys bumped)     |
+
+---
+
+### Upgrade
+
+| Function             | Auth          | Inputs                                           | Returns         |
+| -------------------- | ------------- | ------------------------------------------------ | --------------- |
+| `propose_upgrade`    | Upgrader role | `upgrader: Address`, `new_wasm_hash: BytesN<32>` | `()`            |
+| `execute_upgrade`    | Upgrader role | `upgrader: Address`                              | `()`            |
+| `upgrade`            | Upgrader role | `upgrader: Address`, `new_wasm_hash: BytesN<32>` | `()`            |
+| `get_contract_state` | none          | —                                                | `ContractState` |
+
+---
+
+### Credentials & DM Keys
+
+| Function                   | Auth                                  | Inputs                                                                                 | Returns              |
+| -------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------- | -------------------- |
+| `set_credential_authority` | Admin role                            | `admin: Address`, `pubkey: BytesN<32>`                                                 | `()`                 |
+| `update_credential_root`   | caller (`user`) + authority signature | `user: Address`, `new_root: BytesN<32>`, `signature: BytesN<64>`                       | `()`                 |
+| `verify_credential`        | none (mutating)                       | `user: Address`, `proof: Vec<BytesN<32>>`, `leaf: BytesN<32>`, `nullifier: BytesN<32>` | `bool`               |
+| `get_credential_root`      | none                                  | `user: Address`                                                                        | `Option<BytesN<32>>` |
+| `publish_dm_key`           | caller (`user`)                       | `user: Address`, `x25519_pubkey: BytesN<32>`                                           | `()`                 |
+| `get_dm_key`               | none                                  | `user: Address`                                                                        | `Option<BytesN<32>>` |
+
+---
+
+> **Scope note.** The HTTP request authentication reference for the indexer REST API
+> continues below. The Soroban storage layout and full event schema are in
+> `packages/contracts/contracts/linkora-contracts/src/lib.rs`.
 
 ---
 
@@ -321,306 +499,371 @@ protected endpoint must be JSON**, or the raw-body capture in
 
 ---
 
-## 10. Reputation Module (Post Scoring)
+## Rewards
 
-### 10.1 Overview and Implementation Status
+Creator rewards in Linkora flow through two complementary mechanisms: **direct tipping**
+(peer-to-peer, synchronous) and **analytics-attested rewards** (oracle-driven, asynchronous).
+There is no separate `rewards.rs` module — both mechanisms are implemented directly in
+`src/lib.rs`.
 
-The Reputation Module governs how posts are ranked for discovery. In the current implementation
-the entire scoring pipeline is **off-chain**, running inside the indexer service
-(`services/indexer`). There is no on-chain reputation contract yet.
-
-Two files referenced in the project issue tracker are **planned but not yet created**:
-
-| Planned file                        | Purpose                                             |
-| ----------------------------------- | --------------------------------------------------- |
-| `src/reputation.rs`                 | On-chain Soroban contract for per-user reputation   |
-| `packages/reputation/src/scorer.ts` | TypeScript scorer to be consumed by SDK and clients |
-
-Until those files are shipped, all scoring logic lives in the places listed below. This
-section documents that live system.
-
-| File                                              | Role                                       |
-| ------------------------------------------------- | ------------------------------------------ |
-| `services/indexer/migrations/009_post_scores.sql` | DDL — defines the `post_scores` view       |
-| `services/indexer/src/score-refresh.ts`           | `ScoreRefreshService` — refresh scheduling |
-| `services/indexer/src/api/routes/feed.ts`         | `GET /feed/explore` — score-ranked feed    |
-| `services/indexer/src/metrics.ts`                 | `score_refresh_deferred_total` counter     |
+> **Architecture note.** The issue references an epoch/distribute/claim pattern. The current
+> contract does not implement on-chain epoch accounting or a pull-based claim queue. Rewards
+> reach creators in one of two ways:
+>
+> 1. **Tip** — immediately transferred to the post author minus the protocol fee.
+> 2. **Analytics attestation** — the oracle verifies a signed CBOR report off-chain; the
+>    contract records the attestation on-chain and emits an event that the indexer uses to
+>    trigger an off-chain distribution action (e.g., airdrop or pool deposit).
 
 ---
 
-### 10.2 Storage
+### Mechanism 1 — Direct tipping
 
-Scores are not stored per row in the `posts` table. Instead they are materialised into a
-separate read model that is recomputed from the `posts` source table on a schedule.
+Any user can tip a post. Tokens are split between the post author and the treasury at the
+time of the call — there is no claimable balance to withdraw later.
 
-```sql
--- services/indexer/migrations/009_post_scores.sql
-CREATE MATERIALIZED VIEW IF NOT EXISTS post_scores AS
-SELECT
-    p.id,
-    p.author,
-    p.content,
-    p.tip_total,
-    p.like_count,
-    p.created_at,
-    (
-        100 +
-        (p.like_count * 5) +
-        (p.tip_total::numeric / 1000000) -
-        EXTRACT(EPOCH FROM (NOW() - p.created_at)) / 3600
-    )::integer AS score,
-    NOW() AS last_updated
-FROM posts p
-WHERE p.deleted_at IS NULL;
+**Function:** `tip(tipper, post_id, token, amount)`
+
+| Parameter | Type      | Description                                       |
+| --------- | --------- | ------------------------------------------------- |
+| `tipper`  | `Address` | Address sending the tip (must be authenticated).  |
+| `post_id` | `u64`     | ID of the post to tip.                            |
+| `token`   | `Address` | SEP-41 token contract address.                    |
+| `amount`  | `i128`    | Tip amount in smallest token units (must be > 0). |
+
+**Fee split:**
+
+```
+fee_amount   = floor(amount × fee_bps / 10_000)
+author_amount = amount − fee_amount
 ```
 
-Three indexes are maintained on the view:
+`fee_amount` is transferred to the treasury. `author_amount` is transferred directly to the
+post author. `post.tip_total` is incremented by `author_amount` (capped at 10^18).
 
-| Index                    | Columns                   | Purpose                                               |
-| ------------------------ | ------------------------- | ----------------------------------------------------- |
-| `idx_post_scores_score`  | `score DESC`              | Primary ordering for the explore feed                 |
-| `idx_post_scores_author` | `author, created_at DESC` | Per-author lookups in the following feed              |
-| `idx_post_scores_id`     | `id` (unique)             | Required for `REFRESH MATERIALIZED VIEW CONCURRENTLY` |
+**Cooldown:** One tip per tipper per post per `TIP_COOLDOWN_WINDOW` ledgers (default ~1 day
+at 5 s/ledger). Configurable by Admin via `set_tip_cooldown_window`.
 
-The view is refreshed via `REFRESH MATERIALIZED VIEW CONCURRENTLY post_scores`. Because that
-statement requires exclusive access for the brief final swap, only one refresh can run at a
-time. The scheduler handles collisions with retries — see [§10.7](#107-score-refresh-lifecycle).
+**Errors:**
+
+- Post does not exist
+- Tipper is the post author
+- Either party has blocked the other
+- Cooldown has not expired
+- `tip_total` cap would be exceeded
+- Post author has no registered profile
 
 ---
 
-### 10.3 Scoring Signals and Formula
+### Mechanism 2 — Analytics oracle attestation
 
-The score for a post is a single integer computed at refresh time. Four signals feed into it:
+The oracle pipeline lets an off-chain analytics service publish a signed report about a
+creator's activity (views, engagement, etc.). The contract verifies the Ed25519 signature,
+records a nullifier to prevent replay, and emits an event. Downstream reward distribution
+is handled off-chain by the indexer or a separate distribution service.
 
-| Signal     | Weight                               | Source column |
-| ---------- | ------------------------------------ | ------------- |
-| Base score | +100 (constant for every live post)  | —             |
-| Likes      | +5 per like                          | `like_count`  |
-| Tips       | +1 per 1 000 000 stroops (≈ 0.1 XLM) | `tip_total`   |
-| Recency    | −1 per hour since `created_at`       | `created_at`  |
+#### Epoch definition
 
-The formula in full:
+An **epoch** is defined by the `window_start` and `window_end` Unix timestamps in the
+analytics report CBOR. The oracle computes this window off-chain based on its own scheduling
+logic (e.g., weekly or monthly). The contract validates only that the current ledger
+timestamp falls within the window.
+
+#### Distribution call
+
+**Function:** `verify_analytics_attestation(oracle_name, report_cbor, signature, creator, window_start, window_end) → bool`
+
+| Parameter      | Type         | Description                                                                |
+| -------------- | ------------ | -------------------------------------------------------------------------- |
+| `oracle_name`  | `Symbol`     | Name of the oracle whose key is used for verification.                     |
+| `report_cbor`  | `Bytes`      | Raw CBOR-encoded analytics report.                                         |
+| `signature`    | `BytesN<64>` | Ed25519 signature of `sha256(report_cbor)` from the registered oracle key. |
+| `creator`      | `Address`    | Creator address this report is for.                                        |
+| `window_start` | `u64`        | Unix timestamp of the epoch start.                                         |
+| `window_end`   | `u64`        | Unix timestamp of the epoch end.                                           |
+
+Returns `true` on successful verification.
+
+**Errors:**
+
+- Oracle not registered (`register_oracle` has not been called for `oracle_name`)
+- Signature verification fails
+- Current ledger timestamp is outside `[window_start, window_end]`
+- Attestation has already been submitted (nullifier replay)
+
+#### Claimable window
+
+The contract accepts an attestation only while the current ledger timestamp satisfies:
 
 ```
-score = 100
-      + (like_count × 5)
-      + (tip_total / 1_000_000)
-      − floor(age_in_seconds / 3600)
+window_start ≤ ledger.timestamp() ≤ window_end
 ```
 
-`tip_total` is stored in **stroops** (the smallest Stellar unit, 1 XLM = 10 000 000 stroops).
-Dividing by 1 000 000 normalises it so that roughly 0.1 XLM of tips equals 1 score point.
+Attestations submitted after `window_end` are rejected with `"attestation outside time
+window"`. This bounds the window during which the oracle must call the contract.
 
-Example — a post with 10 likes and 1 XLM tip (10 000 000 stroops), created 2 hours ago:
+#### Re-claim prevention
 
-```
-100 + (10 × 5) + (10_000_000 / 1_000_000) − 2
-= 100 + 50 + 10 − 2
-= 158
-```
-
-Because the score is cast to `integer` the result is truncated (not rounded) toward zero.
+Each attestation is identified by `sha256(report_cbor)`. The contract stores this hash as
+`AttestationNullifier(report_hash) → bool` in persistent storage. Any second call with the
+same `report_cbor` is rejected as `"attestation already submitted"`.
 
 ---
 
-### 10.4 Recency Decay
-
-The decay term is linear, not exponential:
+### Sequence diagram — oracle → attest → creator reward
 
 ```
-decay = floor(age_in_seconds / 3600)   -- 1 point per hour
-```
+Analytics Oracle         LinkoraContract           Indexer / Distribution
+      |                        |                           |
+      | -- register_oracle()-->|                           |
+      |    (admin, one-time)   |                           |
+      |                        |                           |
+      |  [epoch window opens]  |                           |
+      |                        |                           |
+      | -- verify_analytics_  |                           |
+      |    attestation() ----->|                           |
+      |    (report_cbor,       | store nullifier           |
+      |     signature,         | emit AttestationVerified  |
+      |     creator, window)   |  Event                    |
+      |                        |                           |
+      |    true /<-------------|                           |
+      |                        |                           |
+      |                        |-- AttestationVerified --->|
+      |                        |   Event (indexed)         |
+      |                        |                           |
+      |                        |         trigger off-chain |
+      |                        |         distribution      |
+      |                        |         (airdrop / pool   |
+      |                        |          deposit)         |
 
-A brand-new post starts with a base of 100 and loses exactly 1 point for every hour it ages,
-regardless of engagement. This means a post with zero engagement reaches a score of 0 after
-100 hours (≈ 4.2 days) and goes negative thereafter.
+## 10. Pool Withdrawal Process
 
-Posts are never removed from `post_scores` due to a low score alone. They remain in the view
-until their corresponding row in `posts` is soft-deleted (`deleted_at IS NOT NULL`), at
-which point the view excludes them on the next refresh.
-
-> **Planned:** The future `packages/reputation/src/scorer.ts` is expected to expose
-> configurable decay parameters (half-life, floor, per-signal weights). Until then the
-> weights above are hard-coded in the migration SQL and can only be changed by a new
-> migration.
+Community pools in Linkora are governed by a multi-sig model: a withdrawal can
+only proceed once a configurable **threshold** of pool admins have signed off.
+This section is a step-by-step guide for pool admins using the TypeScript SDK.
 
 ---
 
-### 10.5 Tier Thresholds
+### Prerequisites
 
-There are no tier thresholds defined in the current codebase. The score is a continuous
-integer used only for ordering — no "Bronze / Silver / Gold" classification exists in the
-database schema, the indexer API, or the contracts.
-
-Tier labels are expected to be introduced in either:
-
-- `packages/reputation/src/scorer.ts` (off-chain classification), or
-- `src/reputation.rs` (on-chain reputation tiers backed by Soroban storage).
-
-Neither file exists yet. If you are building a client that wants to display tiers today,
-you must define the thresholds locally. The following illustrative ranges are **not**
-enforced by the system:
-
-| Tier     | Score range (illustrative) |
-| -------- | -------------------------- |
-| Rising   | 0 – 99                     |
-| Active   | 100 – 249                  |
-| Popular  | 250 – 499                  |
-| Trending | 500 +                      |
-
-These numbers are provided as a starting point only and are subject to change once the
-official tier spec is shipped.
+- The pool has been created and funded (via `create_pool` / `deposit_pool`).
+- You have the Stellar public keys of all admins who will co-sign.
+- Each admin's wallet (Freighter or Ledger) is connected to the same app
+  instance, or you are coordinating signatures out-of-band.
 
 ---
 
-### 10.6 Reading Scores via the Indexer API
+### Step 1 — Check the current threshold
 
-There are no SDK methods for reading scores — the SDK only wraps Soroban contract calls and
-does not talk to the indexer REST API directly. Scores are exposed through a single indexer
-endpoint.
-
-#### `GET /feed/explore`
-
-Returns posts ranked by descending score. Supports cursor-based pagination and optional tag
-filtering.
-
-| Parameter | Type   | Required | Description                                                               |
-| --------- | ------ | -------- | ------------------------------------------------------------------------- |
-| `limit`   | number | no       | Number of posts to return (default 20, max 100)                           |
-| `cursor`  | number | no       | Exclusive upper bound on `score`; omit on first page                      |
-| `tag`     | string | no       | Filter to posts whose `tags` array contains this value (case-insensitive) |
-
-Example — first page of explore feed:
-
-```
-GET /api/feed/explore?limit=10
-```
-
-```json
-{
-  "posts": [
-    {
-      "id": 42,
-      "author": "GABC...XYZ",
-      "content": "Hello Linkora!",
-      "tags": ["intro"],
-      "tip_total": 10000000,
-      "like_count": 12,
-      "created_at": "2026-09-29T10:00:00.000Z",
-      "score": 162
-    }
-  ],
-  "has_more": false,
-  "next_cursor": 162
-}
-```
-
-Example — next page using the `next_cursor` from the previous response:
-
-```
-GET /api/feed/explore?limit=10&cursor=162
-```
-
-The server queries `post_scores WHERE score < :cursor ORDER BY score DESC LIMIT :limit`.
-Pass `next_cursor` from the previous response as `cursor` on the next request. When
-`has_more` is `false`, you have reached the end of the feed.
-
-Example — fetch explore feed directly with `fetch`:
+Before initiating a withdrawal, confirm the number of signatures required:
 
 ```typescript
-async function fetchExploreFeed(
-  baseUrl: string,
-  limit = 20,
-  cursor?: number,
-  tag?: string
-): Promise<{ posts: Post[]; hasMore: boolean; nextCursor: number | null }> {
-  const url = new URL("/api/feed/explore", baseUrl);
-  url.searchParams.set("limit", String(limit));
-  if (cursor !== undefined) url.searchParams.set("cursor", String(cursor));
-  if (tag) url.searchParams.set("tag", tag);
+import { LinkoraClient } from "@linkora/sdk";
 
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`Explore feed request failed: ${res.status}`);
+const client = new LinkoraClient({
+  contractId: "CCONTRACTID...",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+});
 
-  const data = await res.json();
-  return {
-    posts: data.posts,
-    hasMore: data.has_more,
-    nextCursor: data.next_cursor,
-  };
+// Read the pool config to find the current threshold
+const pool = await client.getPool("my-pool-1");
+console.log(`Pool threshold: ${pool.threshold} of ${pool.admins.length} admins required`);
+```
+
+---
+
+### Admin-only functions
+
+| Function                  | Required role | Description                                                  |
+| ------------------------- | ------------- | ------------------------------------------------------------ |
+| `register_oracle`         | `Admin`       | Registers (or rotates) an Ed25519 oracle public key by name. |
+| `set_fee`                 | `Admin`       | Updates the tip protocol fee in basis points.                |
+| `set_treasury`            | `Admin`       | Updates the treasury address that receives tip fees.         |
+| `set_tip_cooldown_window` | `Admin`       | Adjusts the per-tipper per-post cooldown in ledgers.         |
+
+### Events emitted
+
+| Event                      | Topics                       | Fields                                  | Emitted when                                  |
+| -------------------------- | ---------------------------- | --------------------------------------- | --------------------------------------------- |
+| `TipEvent`                 | `tipper`, `post_id`          | `amount`, `fee`                         | A tip is successfully sent.                   |
+| `AttestationVerifiedEvent` | `oracle_name`, `report_hash` | `creator`, `window_start`, `window_end` | An analytics attestation passes verification. |
+
+### Step 2 — Collect admin signatures
+
+Each admin signs the prepared withdrawal transaction envelope. All signers must
+be current pool admins — if even one address in the `signers` array is not
+registered as an admin the contract returns `UnauthorizedSigner` (code 116).
+
+```typescript
+// Build the unsigned transaction envelope
+const txXdr = await client.preparePoolWithdrawTx(
+  [adminAddress1, adminAddress2], // must meet or exceed the pool threshold
+  "my-pool-1", // pool ID
+  500_000_000n, // amount in stroops (500 XLM)
+  recipientAddress // Stellar G... address to receive tokens
+);
+
+// --- Admin 1 signs ---
+// Pass txXdr to admin 1's wallet for signing (e.g. via Freighter)
+const signedByAdmin1 = await wallet.signTransaction(txXdr);
+
+// --- Admin 2 signs ---
+// Pass the envelope on to admin 2 for a second signature
+const signedByBoth = await wallet2.signTransaction(signedByAdmin1);
+```
+
+> **Coordination note.** In a typical flow each admin signs the same XDR
+> envelope in sequence and passes it to the next. The final signed envelope
+> (after all required admins have signed) is what you submit to Soroban.
+
+---
+
+### Step 3 — Submit the withdrawal
+
+```typescript
+import { submitTransaction } from "@linkora/sdk";
+
+// Submit the fully-signed envelope to Soroban
+const txHash = await submitTransaction(signedByBoth, {
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: "Test SDF Network ; September 2015",
+});
+
+console.log("Withdrawal submitted:", txHash);
+```
+
+---
+
+### Threshold Check
+
+The contract enforces the threshold on-chain:
+
+1. It counts how many of the supplied `signers` are registered admins of the pool.
+2. If the count is below the pool's `threshold`, it returns `InsufficientSigners` (code 115).
+3. If any address in `signers` is **not** a pool admin, it returns `UnauthorizedSigner` (code 116).
+
+```
+signers.length ≥ pool.threshold   AND   every signer ∈ pool.admins
+```
+
+---
+
+### Token Transfer
+
+When the threshold is met the contract transfers exactly `amount` stroops of the
+pool's token from the pool's internal ledger storage to `recipient`. The pool
+balance is decremented accordingly.
+
+If the requested amount exceeds the pool balance, the contract returns
+`LowBalance` (code 117) and no transfer occurs.
+
+---
+
+### Adding a Pool Admin
+
+```typescript
+// Existing admins authorise the addition of a new admin.
+// The number of authorising signers must still meet the current threshold.
+const txXdr = client.addPoolAdmin(
+  [adminAddress1, adminAddress2], // authorising admins (must meet threshold)
+  "my-pool-1", // pool ID
+  newAdminAddress // G... address of the new admin
+);
+```
+
+The contract rejects the call with `PoolAdminExists` (code 131) if the address
+is already an admin.
+
+---
+
+### Removing a Pool Admin
+
+```typescript
+// Removing an admin also requires threshold authorisation.
+const txXdr = client.removePoolAdmin(
+  [adminAddress1, adminAddress2], // authorising admins
+  "my-pool-1", // pool ID
+  adminToRemove // G... address of the admin to remove
+);
+```
+
+The contract returns `PoolAdminNotFound` (code 130) if the address is not an
+admin, and `CannotRemoveLastAdmin` (code 141) if the removal would leave the
+pool with zero admins.
+
+---
+
+### Updating the Threshold
+
+```typescript
+// Raise or lower the required signature count.
+// The call itself must be authorised by the current number of required signers.
+const txXdr = client.updatePoolThreshold(
+  [adminAddress1, adminAddress2], // must meet the *current* threshold
+  "my-pool-1", // pool ID
+  3 // new threshold (must be 1 ≤ threshold ≤ admin count)
+);
+```
+
+The contract returns `InvalidThreshold` (code 114) if the new value is 0 or
+greater than the number of registered admins.
+
+---
+
+### Error Quick-Reference
+
+| Situation                                  | Contract code | SDK class                  |
+| ------------------------------------------ | ------------- | -------------------------- |
+| Signer is not a pool admin                 | `116`         | `UnauthorizedError`        |
+| Fewer signers than the pool threshold      | `115`         | `UnauthorizedError`        |
+| Withdrawal amount exceeds pool balance     | `117`         | `InsufficientBalanceError` |
+| Pool ID does not exist                     | `112`         | `NotFoundError`            |
+| New threshold is 0 or > admin count        | `114`         | `ValidationError`          |
+| Removing the last admin                    | `141`         | `UnauthorizedError`        |
+| Adding an address that is already an admin | `131`         | `ValidationError`          |
+| Removing an address that is not an admin   | `130`         | `NotFoundError`            |
+
+---
+
+### Full TypeScript Example
+
+```typescript
+import { LinkoraClient, UnauthorizedError, InsufficientBalanceError } from "@linkora/sdk";
+
+const client = new LinkoraClient({
+  contractId: "CCONTRACTID...",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  publicKey: adminAddress1,
+});
+
+async function withdrawFromPool(
+  poolId: string,
+  amountStroops: bigint,
+  recipient: string,
+  signers: string[]
+): Promise<string> {
+  // 1. Prepare the transaction
+  const txXdr = await client.preparePoolWithdrawTx(signers, poolId, amountStroops, recipient);
+
+  // 2. Collect signatures from each admin wallet (implementation depends on your wallet integration)
+  let signed = txXdr;
+  for (const signer of signers) {
+    signed = await collectSignature(signer, signed);
+  }
+
+  // 3. Submit and return the transaction hash
+  try {
+    return await client.submitSignedTransaction(signed);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      throw new Error("Withdrawal failed: insufficient or invalid admin signatures.");
+    }
+    if (err instanceof InsufficientBalanceError) {
+      throw new Error("Withdrawal failed: pool balance is too low.");
+    }
+    throw err;
+  }
 }
 ```
-
-Reading a specific post's score is not a dedicated endpoint. To read the score for a known
-post ID, query the explore feed and look up by `id`, or query the `post_scores` view directly
-if you have database access:
-
-```sql
-SELECT id, score, last_updated
-FROM post_scores
-WHERE id = $1;
-```
-
----
-
-### 10.7 Score Refresh Lifecycle
-
-`ScoreRefreshService` (`services/indexer/src/score-refresh.ts`) owns the refresh schedule.
-
-**Defaults:**
-
-| Parameter                | Default  | Description                                       |
-| ------------------------ | -------- | ------------------------------------------------- |
-| `refreshIntervalMinutes` | `5`      | Cron cadence — `*/5 * * * *`                      |
-| `statementTimeoutMs`     | `30 000` | Per-attempt `SET LOCAL statement_timeout`         |
-| `maxRetries`             | `5`      | Maximum consecutive retries after first collision |
-| `retryBaseDelayMs`       | `1 000`  | Base delay for exponential backoff                |
-| `retryMaxDelayMs`        | `30 000` | Upper cap on backoff delay                        |
-| `jitterFraction`         | `0.25`   | Fraction of interval used for startup jitter      |
-
-**Refresh flow:**
-
-1. A cron job fires every `refreshIntervalMinutes` minutes plus a random jitter of up to
-   `jitterFraction × interval`. The jitter desynchronises multiple indexer replicas so they
-   do not all fire at the same clock boundary.
-2. The service opens a dedicated connection, issues `BEGIN`, sets
-   `SET LOCAL statement_timeout`, and runs
-   `REFRESH MATERIALIZED VIEW CONCURRENTLY post_scores`.
-3. On success it commits and logs `[score-refresh] Successfully refreshed post_scores`.
-4. On a transient collision (concurrent refresh in progress, lock timeout `55P03`,
-   statement timeout `57014`, deadlock `40P01`, serialization failure `40001`) it rolls
-   back, emits the `score_refresh_deferred_total` Prometheus counter, logs a structured
-   JSON event, and retries with **exponential backoff + full jitter**:
-
-```
-delay = random(floor(cap / 2), cap)   where  cap = min(base × 2^attempt, maxDelay)
-```
-
-5. After `maxRetries` consecutive transient failures, or on any non-transient error, the
-   exception is re-thrown. The scheduler catches it and keeps itself alive for the next
-   scheduled run.
-
-The `score_refresh_deferred_total` counter is exposed in the Prometheus text format via the
-metrics endpoint and is the primary signal for refresh contention in production.
-
----
-
-### 10.8 Planned: on-chain Reputation and SDK Integration
-
-The items below are tracked in the issue backlog and are listed here so integrators know
-what is coming.
-
-**`src/reputation.rs`** — a Soroban contract module that will add:
-
-- Per-user reputation scores stored in Soroban persistent storage.
-- On-chain storage keys for reputation data (e.g. `Reputation(Address) -> u64`).
-- Tier classification enforced at the contract level.
-- Events emitted on reputation changes (`ReputationUpdated`, `TierChanged`).
-
-**`packages/reputation/src/scorer.ts`** — a TypeScript scorer that will:
-
-- Expose a typed `getScore(postId: number): Promise<number>` helper wrapping the indexer API.
-- Provide `classifyTier(score: number): Tier` with the official thresholds.
-- Be consumable by both `apps/web` and `apps/mobile` without duplicating fetch logic.
-
-Until these files land, use the `GET /api/feed/explore` endpoint directly (see [§10.6](#106-reading-scores-via-the-indexer-api)) and define any tier logic locally.

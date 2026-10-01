@@ -1,0 +1,9 @@
+{
+  "name": "@linkora/media",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "echo \"media service not yet implemented\"",
+    "build": "echo \"media service not yet implemented\"",
+    "test": "echo \"no tests yet\" && exit 0"
+  }
+}
