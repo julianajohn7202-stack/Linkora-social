@@ -29,6 +29,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Type-check all TypeScript packages
+        # Runs `tsc --noEmit` (strict mode) across every workspace that has a
+        # "typecheck" script, including:
+        #   packages/reputation, packages/analytics
+        #   services/notification, services/search, services/media
+        #   packages/sdk, packages/types, packages/codegen
+        #   services/indexer, services/dm-relay, services/analytics-oracle
+        #   apps/web, apps/mobile
         run: pnpm typecheck
 
       - name: Run JS/TS tests

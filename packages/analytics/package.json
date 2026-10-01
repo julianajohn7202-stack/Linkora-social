@@ -1,0 +1,26 @@
+{
+  "name": "@linkora/analytics",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Linkora analytics — creator engagement metrics, on-chain activity aggregation, and reporting primitives",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "@linkora/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
