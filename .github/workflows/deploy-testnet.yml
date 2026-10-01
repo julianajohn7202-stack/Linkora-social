@@ -29,6 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: secrets-check
     if: needs.secrets-check.outputs.available == 'true'
+    # Gate every production deployment behind required-reviewer approval.
+    # The `production` environment must be configured in GitHub repository
+    # settings (Settings → Environments) with the desired reviewers and branch
+    # policy. See .github/environments/production.yml for setup instructions.
+    environment: production
     env:
       NETWORK: testnet
       ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
