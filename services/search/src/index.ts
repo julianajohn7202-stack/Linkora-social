@@ -1,52 +1,81 @@
-// tracing MUST be the very first import so OTel auto-instrumentations are
-// registered before express (or any other library) is loaded.
-import "./tracing";
-
 import express, { Request, Response } from "express";
-import { trace } from "@opentelemetry/sdk-node";
-import { pino } from "pino";
+import helmet from "helmet";
+import { Pool } from "pg";
 
-const logger = pino({
-  level: process.env["LOG_LEVEL"] ?? "info",
-  base: { service: "search" },
-  timestamp: pino.stdTimeFunctions.isoTime,
-  ...(process.env["NODE_ENV"] !== "production" && {
-    transport: {
-      target: "pino-pretty",
-      options: { colorize: true, ignore: "pid,hostname", translateTime: "SYS:standard" },
-    },
-  }),
-});
+const PORT = parseInt(process.env.PORT ?? "3002", 10);
+const DATABASE_URL = process.env.DATABASE_URL;
 
 const app = express();
+app.use(helmet());
 app.use(express.json());
 
-const tracer = trace.getTracer("search");
+// PostgreSQL connection pool
+const pool = new Pool({ connectionString: DATABASE_URL });
 
-/** GET /health — liveness probe with a sample manual span */
-app.get("/health", (_req: Request, res: Response) => {
-  const span = tracer.startSpan("search.health.check");
+// ── Health endpoint ────────────────────────────────────────────────────────
+app.get("/health", async (_req: Request, res: Response) => {
   try {
-    res.json({ status: "ok", service: "search" });
-  } finally {
-    span.end();
+    await pool.query("SELECT 1");
+    res.json({ status: "ok", service: "search", db: "connected" });
+  } catch (_err) {
+    res.status(503).json({ status: "error", service: "search", db: "unreachable" });
   }
 });
 
-/** GET /health/ready — readiness probe */
+// ── Readiness probe ────────────────────────────────────────────────────────
 app.get("/health/ready", (_req: Request, res: Response) => {
   res.json({ status: "ready", service: "search" });
 });
 
-const PORT = parseInt(process.env["PORT"] ?? "3003", 10);
+// ── Search endpoint ────────────────────────────────────────────────────────
+// GET /search?q=<query>&type=profiles|posts&limit=20&offset=0
+app.get("/search", async (req: Request, res: Response) => {
+  const q = String(req.query.q ?? "").trim();
+  const type = String(req.query.type ?? "posts");
+  const limit = Math.min(parseInt(String(req.query.limit ?? "20"), 10), 100);
+  const offset = parseInt(String(req.query.offset ?? "0"), 10);
 
+  if (!q) {
+    res.status(400).json({ error: "query parameter 'q' is required" });
+    return;
+  }
+
+  try {
+    if (type === "profiles") {
+      const { rows } = await pool.query(
+        `SELECT address, display_name, bio, avatar_url
+           FROM profiles
+          WHERE to_tsvector('english', coalesce(display_name,'') || ' ' || coalesce(bio,''))
+                @@ plainto_tsquery('english', $1)
+          ORDER BY display_name
+          LIMIT $2 OFFSET $3`,
+        [q, limit, offset]
+      );
+      res.json({ type: "profiles", results: rows });
+    } else {
+      const { rows } = await pool.query(
+        `SELECT id, author, content, created_at
+           FROM posts
+          WHERE to_tsvector('english', content)
+                @@ plainto_tsquery('english', $1)
+          ORDER BY created_at DESC
+          LIMIT $2 OFFSET $3`,
+        [q, limit, offset]
+      );
+      res.json({ type: "posts", results: rows });
+    }
+  } catch (_err) {
+    res.status(500).json({ error: "search query failed" });
+  }
+});
+
+// ── Start server ───────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {
-  logger.info({ port: PORT }, "search service listening");
+  console.log(`[search] listening on port ${PORT}`);
 });
 
 // Graceful shutdown
 function shutdown() {
-  logger.info("shutting down search service");
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 10_000).unref();
 }
@@ -54,4 +83,4 @@ function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
-export { app };
+export default app;
