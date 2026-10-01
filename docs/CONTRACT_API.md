@@ -18,6 +18,7 @@
 7. [Worked Example](#7-worked-example)
 8. [Protected Endpoints](#8-protected-endpoints)
 9. [Known Limitations of v1](#9-known-limitations-of-v1)
+10. [Pool Withdrawal Process](#pool-withdrawal-process)
 
 ---
 
@@ -265,6 +266,355 @@ testing a live endpoint.
 | `POST` | `/api/messages`                  | JSON |
 
 All other indexer endpoints are public reads and take no `Authorization` header.
+
+---
+
+---
+
+## Pool Withdrawal Process
+
+Community pools hold tokens on-chain under a multi-signature guard: every
+withdrawal, admin change, and threshold update requires at least `threshold`
+current admins to sign the same transaction. This section describes how that
+process works, what invariants the contract enforces, and how to drive it from
+TypeScript using the SDK.
+
+### Table of Contents
+
+- [Overview](#overview)
+- [Pool Data Model](#pool-data-model)
+- [Multi-Sig Withdrawal — Step by Step](#multi-sig-withdrawal--step-by-step)
+- [Managing Admins](#managing-admins)
+  - [Adding an Admin](#adding-an-admin)
+  - [Removing an Admin](#removing-an-admin)
+- [Updating the Threshold](#updating-the-threshold)
+- [Events](#events)
+- [Error Reference](#error-reference)
+- [TypeScript Examples](#typescript-examples)
+
+---
+
+### Overview
+
+Every pool has:
+
+- a single **token** (SEP-41 contract address) that it holds,
+- a **balance** tracked on-chain and reconciled against actual token transfers,
+- a list of **admins** (Stellar `G…` addresses), and
+- a **threshold** — the minimum number of distinct admin signatures required to
+  authorise any mutating operation (withdraw, add/remove admin, update threshold).
+
+This is an M-of-N scheme: if a pool has 5 admins and `threshold = 3`, any 3 of
+those admins must sign the same transaction before the contract will execute it.
+The contract validates:
+
+1. The `signers` array contains at least `threshold` entries.
+2. Every entry in `signers` is a current admin of the pool.
+3. Each signer calls `require_auth()`, so every signer's wallet must include
+   a valid authorization entry in the transaction envelope.
+
+Duplicate signers are rejected — each address may appear at most once per
+invocation.
+
+---
+
+### Pool Data Model
+
+```
+Pool {
+  token:     Address,    // SEP-41 token contract
+  balance:   i128,       // current on-chain balance (stroops)
+  admins:    Vec<Address>,
+  threshold: u32,        // 1 ≤ threshold ≤ admins.len()
+}
+```
+
+Read the current state of a pool at any time:
+
+```ts
+const pool = await client.getPool("my-pool-1");
+// pool?.balance, pool?.admins, pool?.threshold
+```
+
+---
+
+### Multi-Sig Withdrawal — Step by Step
+
+#### 1. Check the current pool state
+
+Before building a withdrawal, confirm the pool has enough balance and that you
+know the current threshold and admin set:
+
+```ts
+const pool = await client.getPool("my-pool-1");
+if (!pool) throw new Error("Pool not found");
+
+console.log("Balance  :", pool.balance.toString());
+console.log("Threshold:", pool.threshold);
+console.log("Admins   :", pool.admins);
+```
+
+#### 2. Collect signers
+
+Gather at least `pool.threshold` admin addresses that are willing to sign.
+Every address in the `signers` array must:
+
+- appear in `pool.admins`, and
+- provide an authorization entry in the transaction envelope.
+
+The contract checks both conditions and panics if either fails.
+
+#### 3. Build the transaction
+
+Use `preparePoolWithdrawTx` to produce a fully-simulated transaction envelope
+ready for wallet signing. The first signer in the array is used as the
+transaction source account:
+
+```ts
+const txXdr = await client.preparePoolWithdrawTx(
+  ["GBFOY...", "GCO23..."], // signers — must meet threshold
+  "my-pool-1", // pool ID
+  500_000_000n, // amount in stroops (500 XLM)
+  "GDX..." // recipient
+);
+```
+
+#### 4. Each signer authorizes and signs
+
+The returned `txXdr` must be authorized by every admin in `signers`. Distribute
+the envelope to each co-signer and collect their `auth` entries. The exact
+coordination mechanism (shared URL, a relay service, etc.) is outside the
+contract — what matters is that when the transaction is finally submitted every
+`require_auth()` call in the invocation tree is satisfied.
+
+When using the Freighter browser wallet or Ledger hardware signer, each admin
+passes the envelope through their wallet, which appends its authorization entry
+before returning the signed XDR.
+
+#### 5. Submit
+
+Submit the fully-signed envelope to the Soroban RPC. Use `TransactionQueue` for
+automatic retry with backoff:
+
+```ts
+import { TransactionQueue } from "linkora-sdk";
+
+const queue = new TransactionQueue({ signer, rpc });
+queue.enqueue(signedTxXdr);
+await queue.run();
+```
+
+#### What the contract checks
+
+The contract executes this sequence atomically. If any check fails the entire
+transaction is rolled back:
+
+| Check                            | Error                            |
+| -------------------------------- | -------------------------------- |
+| Pool exists                      | `pool not found` (panic)         |
+| `signers.len() >= threshold`     | `InsufficientSigners` (115)      |
+| Every signer is in `pool.admins` | `UnauthorizedSigner` (116)       |
+| Signer duplicates                | `signers must be unique` (panic) |
+| `pool.balance >= amount`         | `LowBalance` (117)               |
+
+Token transfer happens **before** the on-chain balance is decremented. If the
+transfer fails the balance is never modified, leaving the pool in a consistent
+state.
+
+---
+
+### Managing Admins
+
+Admin mutations (add, remove, threshold update) follow the same M-of-N pattern
+as withdrawals: you must supply at least `threshold` current admin signatures.
+
+#### Adding an Admin
+
+The new admin is appended to `pool.admins`. The call panics if `new_admin` is
+already an admin.
+
+**Contract function:** `add_pool_admin(signers, pool_id, new_admin)`
+
+```ts
+// Build operation XDR (throwaway keypair — for batching or queue use)
+const opXdr = client.addPoolAdmin(
+  ["GBFOY...", "GCO23..."], // current admin signers (must meet threshold)
+  "my-pool-1",
+  "GNEW..." // address to add
+);
+
+// Or build a submittable envelope:
+const txXdr = await client.prepareAddPoolAdminTx?.(
+  ["GBFOY...", "GCO23..."],
+  "my-pool-1",
+  "GNEW..."
+);
+```
+
+After success a `PoolAdminAddedEvent` is emitted.
+
+#### Removing an Admin
+
+The address is removed from `pool.admins`. The contract also validates that the
+remaining admin count still meets the threshold — removing an admin that would
+make `threshold > admins.len()` is rejected with `threshold unreachable after
+removal` (panic).
+
+**Contract function:** `remove_pool_admin(signers, pool_id, admin)`
+
+```ts
+const opXdr = client.removePoolAdmin(
+  ["GBFOY...", "GCO23..."], // must meet threshold
+  "my-pool-1",
+  "GOUT..." // address to remove
+);
+```
+
+After success a `PoolAdminRemovedEvent` is emitted.
+
+**Important invariants:**
+
+- You cannot remove an admin if it would leave `admins.len() < threshold`.
+  Lower the threshold first (with `updatePoolThreshold`) if needed.
+- The signer set must come entirely from the _current_ admin list, **including**
+  the admin being removed (they may be one of the signers).
+
+---
+
+### Updating the Threshold
+
+The new threshold must satisfy `1 ≤ new_threshold ≤ admins.len()`. The
+operation itself requires the _current_ threshold of signatures, not the new one.
+
+**Contract function:** `update_pool_threshold(signers, pool_id, threshold)`
+
+```ts
+const opXdr = client.updatePoolThreshold(
+  ["GBFOY...", "GCO23...", "GCDE..."], // signers meeting current threshold
+  "my-pool-1",
+  3 // new threshold
+);
+```
+
+After success a `PoolThresholdUpdatedEvent` is emitted containing both the old
+and new threshold values.
+
+---
+
+### Events
+
+All pool mutations emit on-chain events that the indexer captures and exposes
+over the REST/WebSocket API.
+
+| Event                       | Emitted by              | Key fields                                  |
+| --------------------------- | ----------------------- | ------------------------------------------- |
+| `PoolCreatedEvent`          | `create_pool`           | `pool_id`, `token`, `admins`, `threshold`   |
+| `PoolDepositEvent`          | `pool_deposit`          | `pool_id`, `depositor`, `amount`            |
+| `PoolWithdrawEvent`         | `pool_withdraw`         | `pool_id`, `recipient`, `amount`            |
+| `PoolAdminAddedEvent`       | `add_pool_admin`        | `pool_id`, `new_admin`                      |
+| `PoolAdminRemovedEvent`     | `remove_pool_admin`     | `pool_id`, `admin`                          |
+| `PoolThresholdUpdatedEvent` | `update_pool_threshold` | `pool_id`, `old_threshold`, `new_threshold` |
+
+Subscribe to pool events using the SDK event subscriber:
+
+```ts
+import { LinkoraEventSubscriber } from "linkora-sdk";
+
+const sub = new LinkoraEventSubscriber({ rpcUrl, contractId });
+
+sub.on("pool_withdraw", (event) => {
+  console.log(`Pool ${event.pool_id}: withdrew ${event.amount} to ${event.recipient}`);
+});
+
+await sub.start();
+```
+
+---
+
+### Error Reference
+
+| Code | Name                  | Cause                                                        |
+| ---- | --------------------- | ------------------------------------------------------------ |
+| 112  | `PoolNotFound`        | No pool exists with the given `pool_id`                      |
+| 113  | `PoolExists`          | `create_pool` called with a `pool_id` that is already in use |
+| 114  | `InvalidThreshold`    | `threshold` is 0 or exceeds the number of admins             |
+| 115  | `InsufficientSigners` | `signers.len() < pool.threshold`                             |
+| 116  | `UnauthorizedSigner`  | A signer address is not in `pool.admins`                     |
+| 117  | `LowBalance`          | Requested withdrawal amount exceeds `pool.balance`           |
+| 130  | `PoolAdminNotFound`   | Attempted to remove an address not in `pool.admins`          |
+| 131  | `PoolAdminExists`     | Attempted to add an address already in `pool.admins`         |
+
+---
+
+### TypeScript Examples
+
+The examples below use `LinkoraClient` from `linkora-sdk` and assume the client
+has already been constructed with a valid RPC URL and contract ID.
+
+#### Full withdrawal flow
+
+```ts
+import { LinkoraClient, TransactionQueue } from "linkora-sdk";
+
+const client = new LinkoraClient({
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  contractId: "CABC123...",
+  networkPassphrase: "Test SDF Network ; September 2015",
+});
+
+// 1. Read current pool state
+const pool = await client.getPool("creator-fund");
+if (!pool) throw new Error("Pool not found");
+
+const SIGNERS = ["GBFOY...", "GCO23..."]; // must have at least pool.threshold entries
+
+// 2. Build the transaction envelope
+const txXdr = await client.preparePoolWithdrawTx(
+  SIGNERS,
+  "creator-fund",
+  1_000_000_000n, // 100 XLM in stroops
+  "GREC..." // recipient
+);
+
+// 3. Each signer authorizes (pseudo-code — real auth depends on wallet)
+const signedByFirst = await walletA.sign(txXdr);
+const fullySignedXdr = await walletB.addAuth(signedByFirst);
+
+// 4. Submit with retry
+const queue = new TransactionQueue({ signer: noopSigner, rpc });
+queue.enqueue(fullySignedXdr);
+
+queue.on("status", (e) => {
+  if (e.status === "confirmed") {
+    console.log("Withdrawal confirmed. Tx hash:", e.hash);
+  }
+});
+
+await queue.run();
+```
+
+#### Rotating the admin set (remove old, add new)
+
+```ts
+// Lower the threshold first if needed to make room
+const lowerThresholdOp = client.updatePoolThreshold(["GBFOY...", "GCO23..."], "creator-fund", 1);
+
+// Remove the outgoing admin
+const removeOp = client.removePoolAdmin(
+  ["GBFOY..."], // threshold is now 1
+  "creator-fund",
+  "GOUT..."
+);
+
+// Add the replacement
+const addOp = client.addPoolAdmin(["GBFOY..."], "creator-fund", "GNEW...");
+
+// Raise the threshold back
+const raiseThresholdOp = client.updatePoolThreshold(["GBFOY...", "GNEW..."], "creator-fund", 2);
+```
+
+Each of the above returns base64 operation XDR suitable for batching into a
+single `buildMultiOpTx` call or submitting individually through `TransactionQueue`.
 
 ---
 
