@@ -1,52 +1,60 @@
-// tracing MUST be the very first import so OTel auto-instrumentations are
-// registered before express (or any other library) is loaded.
-import "./tracing";
-
 import express, { Request, Response } from "express";
-import { trace } from "@opentelemetry/sdk-node";
-import { pino } from "pino";
+import helmet from "helmet";
+import sharp from "sharp";
 
-const logger = pino({
-  level: process.env["LOG_LEVEL"] ?? "info",
-  base: { service: "media" },
-  timestamp: pino.stdTimeFunctions.isoTime,
-  ...(process.env["NODE_ENV"] !== "production" && {
-    transport: {
-      target: "pino-pretty",
-      options: { colorize: true, ignore: "pid,hostname", translateTime: "SYS:standard" },
-    },
-  }),
-});
+const PORT = parseInt(process.env.PORT ?? "3003", 10);
 
 const app = express();
-app.use(express.json());
+app.use(helmet());
 
-const tracer = trace.getTracer("media");
-
-/** GET /health — liveness probe with a sample manual span */
+// ── Health endpoint ────────────────────────────────────────────────────────
 app.get("/health", (_req: Request, res: Response) => {
-  const span = tracer.startSpan("media.health.check");
-  try {
-    res.json({ status: "ok", service: "media" });
-  } finally {
-    span.end();
-  }
+  // Confirm sharp is loaded and libvips is available
+  const sharpVersions = sharp.versions;
+  res.json({ status: "ok", service: "media", sharp: sharpVersions });
 });
 
-/** GET /health/ready — readiness probe */
+// ── Readiness probe ────────────────────────────────────────────────────────
 app.get("/health/ready", (_req: Request, res: Response) => {
   res.json({ status: "ready", service: "media" });
 });
 
-const PORT = parseInt(process.env["PORT"] ?? "3004", 10);
+// ── Resize endpoint ────────────────────────────────────────────────────────
+// POST /resize?width=800&height=600
+// Body: raw image bytes (Content-Type: image/*)
+app.post(
+  "/resize",
+  express.raw({ type: "image/*", limit: process.env.MAX_UPLOAD_BYTES ?? "10mb" }),
+  async (req: Request, res: Response) => {
+    const width = parseInt(String(req.query.width ?? "800"), 10);
+    const height = parseInt(String(req.query.height ?? "600"), 10);
 
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      res.status(400).json({ error: "request body must be a raw image" });
+      return;
+    }
+
+    try {
+      const output = await sharp(req.body)
+        .resize(width, height, { fit: "inside", withoutEnlargement: true })
+        .webp({ quality: 80 })
+        .toBuffer();
+
+      res.set("Content-Type", "image/webp");
+      res.send(output);
+    } catch (_err) {
+      res.status(422).json({ error: "image processing failed" });
+    }
+  }
+);
+
+// ── Start server ───────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {
-  logger.info({ port: PORT }, "media service listening");
+  console.log(`[media] listening on port ${PORT}`);
 });
 
 // Graceful shutdown
 function shutdown() {
-  logger.info("shutting down media service");
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 10_000).unref();
 }
@@ -54,4 +62,4 @@ function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
-export { app };
+export default app;
