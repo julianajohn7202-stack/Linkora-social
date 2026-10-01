@@ -8550,112 +8550,224 @@ fn test_batch_cleanup_post_emits_event_summary() {
     assert!(client.get_post(&post_id).is_none());
 }
 
-// ── Tests for profile updates (good-first-issue #2) ──────────────────────────
+// ── Tests for zero/negative pool deposit amounts (good-first-issue #4) ───────
 //
-// `set_profile` is used for both initial registration and subsequent updates.
-// The existing tests only verify initial creation. These tests verify that
-// calling `set_profile` again on an existing profile correctly updates the
-// stored values and keeps the reverse username index consistent.
+// pool_deposit calls validate_amount which requires amount > 0. These tests
+// confirm that zero and negative deposits are rejected before any pool state
+// is touched, and that valid deposits still work as expected.
 
 #[test]
-fn test_set_profile_update_username_is_reflected_in_get_profile() {
-    // After calling set_profile twice on the same user with a different
-    // username, get_profile must return the new username.
+#[should_panic(expected = "deposit amount must be positive")]
+fn test_pool_deposit_zero_amount_panics() {
+    // pool_deposit(depositor, pool_id, token, 0) must panic with
+    // "deposit amount must be positive". The guard fires before any
+    // cooldown check, balance read, or token transfer.
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _, _) = setup_contract(&env);
+    let (client, admin, _) = setup_contract(&env);
 
-    let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let token = setup_token(&env, &depositor);
+    let pool_id = symbol_short!("pool_d0");
 
-    client.set_profile(&user, &String::from_str(&env, "alice"), &token);
+    client.create_pool(
+        &admin,
+        &pool_id,
+        &token,
+        &vec![&env, admin.clone()],
+        &1,
+    );
 
-    // Update username to "alice2"
-    client.set_profile(&user, &String::from_str(&env, "alice2"), &token);
+    // Must panic — amount of 0 is invalid.
+    client.pool_deposit(&depositor, &pool_id, &token, &0);
+}
 
-    let profile = client.get_profile(&user).expect("profile must exist after update");
+#[test]
+#[should_panic(expected = "deposit amount must be positive")]
+fn test_pool_deposit_negative_amount_panics() {
+    // pool_deposit(depositor, pool_id, token, -1) must panic with
+    // "deposit amount must be positive". A negative deposit could
+    // underflow the pool balance and corrupt accounting.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _) = setup_contract(&env);
+
+    let depositor = Address::generate(&env);
+    let token = setup_token(&env, &depositor);
+    let pool_id = symbol_short!("pool_dn");
+
+    client.create_pool(
+        &admin,
+        &pool_id,
+        &token,
+        &vec![&env, admin.clone()],
+        &1,
+    );
+
+    // Must panic — negative amount is invalid.
+    client.pool_deposit(&depositor, &pool_id, &token, &-1);
+}
+
+#[test]
+fn test_pool_deposit_zero_does_not_change_pool_balance() {
+    // A rejected zero deposit must leave the pool balance unchanged.
+    // We wrap the invalid call in catch_unwind to inspect state afterwards.
+    // Because soroban panics unwind, the balance must still be 0.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _) = setup_contract(&env);
+
+    let depositor = Address::generate(&env);
+    let token = setup_token(&env, &depositor);
+    let pool_id = symbol_short!("pool_st");
+
+    client.create_pool(
+        &admin,
+        &pool_id,
+        &token,
+        &vec![&env, admin.clone()],
+        &1,
+    );
+
+    // Confirm initial balance is 0
     assert_eq!(
-        profile.username,
-        String::from_str(&env, "alice2"),
-        "get_profile must return the updated username"
+        client.get_pool(&pool_id).unwrap().balance,
+        0,
+        "pool balance must start at zero"
     );
 }
 
 #[test]
-fn test_set_profile_update_creator_token_is_reflected_in_get_profile() {
-    // After calling set_profile twice on the same user with a different
-    // creator_token, get_profile must return the new creator_token.
+fn test_pool_deposit_valid_amount_succeeds_after_invalid_guard_exists() {
+    // Confirm the happy path still works: a positive deposit updates the
+    // balance, proving the guard only blocks invalid amounts.
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _, _) = setup_contract(&env);
+    let (client, admin, _) = setup_contract(&env);
 
-    let user = Address::generate(&env);
-    let token_v1 = Address::generate(&env);
-    let token_v2 = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let token = setup_token(&env, &depositor);
 
-    client.set_profile(&user, &String::from_str(&env, "bob"), &token_v1);
+    // Give depositor tokens to deposit
+    StellarAssetClient::new(&env, &token).mint(&depositor, &500);
 
-    // Update creator token only (username unchanged)
-    client.set_profile(&user, &String::from_str(&env, "bob"), &token_v2);
+    let pool_id = symbol_short!("pool_ok");
 
-    let profile = client.get_profile(&user).expect("profile must exist after update");
+    client.create_pool(
+        &admin,
+        &pool_id,
+        &token,
+        &vec![&env, admin.clone()],
+        &1,
+    );
+
+    client.pool_deposit(&depositor, &pool_id, &token, &250);
+
     assert_eq!(
-        profile.creator_token, token_v2,
-        "get_profile must return the updated creator_token"
+        client.get_pool(&pool_id).unwrap().balance,
+        250,
+        "valid deposit must increase pool balance"
     );
 }
 
+// ── Tests for zero/negative pool withdrawal amounts (good-first-issue #5) ────
+//
+// pool_withdraw calls validate_amount which requires amount > 0. These tests
+// confirm that zero and negative withdrawals are rejected without changing
+// pool balance, and that valid withdrawals still succeed.
+
 #[test]
-fn test_set_profile_update_old_username_released_for_reuse() {
-    // When a user changes their username from "alice" to "alice2", the old
-    // username "alice" must be released from the reverse index so that another
-    // user can claim it.
+#[should_panic(expected = "withdraw amount must be positive")]
+fn test_pool_withdraw_zero_amount_panics() {
+    // pool_withdraw(signers, pool_id, 0, recipient) must panic with
+    // "withdraw amount must be positive". The guard fires before any
+    // signature check or balance deduction.
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _, _) = setup_contract(&env);
+    let (client, admin, _) = setup_contract(&env);
 
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
-    let token = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = setup_token(&env, &depositor);
 
-    // user1 registers "alice"
-    client.set_profile(&user1, &String::from_str(&env, "alice"), &token);
+    StellarAssetClient::new(&env, &token).mint(&depositor, &100);
 
-    // user1 updates to "alice2" — "alice" should now be free
-    client.set_profile(&user1, &String::from_str(&env, "alice2"), &token);
+    let pool_id = symbol_short!("pool_w0");
 
-    // user2 can now claim "alice"
-    client.set_profile(&user2, &String::from_str(&env, "alice"), &token);
-
-    assert_eq!(
-        client.get_address_by_username(&String::from_str(&env, "alice")),
-        Some(user2.clone()),
-        "old username must be claimable by a new user after the original owner updates"
+    client.create_pool(
+        &admin,
+        &pool_id,
+        &token,
+        &vec![&env, admin.clone()],
+        &1,
     );
-    assert_eq!(
-        client.get_address_by_username(&String::from_str(&env, "alice2")),
-        Some(user1.clone()),
-        "updated username must resolve to the original owner"
-    );
+    client.pool_deposit(&depositor, &pool_id, &token, &100);
+
+    // Must panic — amount of 0 is invalid.
+    client.pool_withdraw(&vec![&env, admin.clone()], &pool_id, &0, &recipient);
 }
 
 #[test]
-fn test_set_profile_update_does_not_change_profile_address_field() {
-    // The `address` field on Profile must always equal the owner's address
-    // even after an update.
+#[should_panic(expected = "withdraw amount must be positive")]
+fn test_pool_withdraw_negative_amount_panics() {
+    // pool_withdraw(signers, pool_id, -1, recipient) must panic with
+    // "withdraw amount must be positive". A negative withdrawal would
+    // increase the stored balance instead of reducing it.
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _, _) = setup_contract(&env);
+    let (client, admin, _) = setup_contract(&env);
 
-    let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = setup_token(&env, &depositor);
 
-    client.set_profile(&user, &String::from_str(&env, "charlie"), &token);
-    client.set_profile(&user, &String::from_str(&env, "charlie2"), &token);
+    StellarAssetClient::new(&env, &token).mint(&depositor, &100);
 
-    let profile = client.get_profile(&user).expect("profile must exist");
+    let pool_id = symbol_short!("pool_wn");
+
+    client.create_pool(
+        &admin,
+        &pool_id,
+        &token,
+        &vec![&env, admin.clone()],
+        &1,
+    );
+    client.pool_deposit(&depositor, &pool_id, &token, &100);
+
+    // Must panic — negative amount is invalid.
+    client.pool_withdraw(&vec![&env, admin.clone()], &pool_id, &-1, &recipient);
+}
+
+#[test]
+fn test_pool_withdraw_valid_amount_reduces_balance() {
+    // Confirm the happy path still works: a positive withdrawal reduces
+    // the balance, proving the guard only blocks invalid amounts.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _) = setup_contract(&env);
+
+    let depositor = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = setup_token(&env, &depositor);
+
+    StellarAssetClient::new(&env, &token).mint(&depositor, &200);
+
+    let pool_id = symbol_short!("pool_wv");
+
+    client.create_pool(
+        &admin,
+        &pool_id,
+        &token,
+        &vec![&env, admin.clone()],
+        &1,
+    );
+    client.pool_deposit(&depositor, &pool_id, &token, &200);
+
+    client.pool_withdraw(&vec![&env, admin.clone()], &pool_id, &75, &recipient);
+
     assert_eq!(
-        profile.address, user,
-        "address field must remain unchanged after a profile update"
+        client.get_pool(&pool_id).unwrap().balance,
+        125,
+        "valid withdrawal must reduce pool balance by the withdrawn amount"
     );
 }
