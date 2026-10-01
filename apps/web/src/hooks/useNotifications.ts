@@ -1,8 +1,49 @@
 "use client";
 
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useWalletContext } from "@/components/WalletProvider";
 import { useNotificationsContext } from "@/contexts/NotificationsContext";
+import { useConfetti } from "./useConfetti";
 
 export type { NotificationType, Notification } from "@/contexts/NotificationsContext";
+import type { Notification } from "@/contexts/NotificationsContext";
+
+const LS_NOTIFICATIONS_KEY = "linkora:notifications:items";
+const PAGE_SIZE = 10;
+const EXCERPT_LEN = 60;
+const INDEXER_URL = process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:3001";
+const INDEXER_WS_URL = INDEXER_URL.replace(/^http/, "ws") + "/ws";
+
+function loadStored(address: string): Notification[] {
+  try {
+    const raw = localStorage.getItem(`${LS_NOTIFICATIONS_KEY}:${address}`);
+    if (!raw) return [];
+    return JSON.parse(raw) as Notification[];
+  } catch {
+    return [];
+  }
+}
+
+function persist(address: string, items: Notification[]): void {
+  localStorage.setItem(`${LS_NOTIFICATIONS_KEY}:${address}`, JSON.stringify(items));
+}
+
+function stroopsToXlm(amount: bigint | string | number): string {
+  return (Number(amount) / 1e7).toFixed(2);
+}
+
+async function fetchPostExcerpt(postId: number): Promise<string | undefined> {
+  try {
+    const res = await fetch(`${INDEXER_URL}/api/posts/${postId}`);
+    if (!res.ok) return undefined;
+    const post = (await res.json()) as { content?: string };
+    if (!post.content) return undefined;
+    const text = post.content.trim();
+    return text.length > EXCERPT_LEN ? `${text.slice(0, EXCERPT_LEN)}…` : text;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Thin consumer over the canonical NotificationsProvider.
@@ -10,10 +51,14 @@ export type { NotificationType, Notification } from "@/contexts/NotificationsCon
  * All notification state (including the indexer WebSocket feed) now lives in
  * `NotificationsContext`, so this hook lets existing callers keep reading the
  * inbox without owning their own copy of the data.
+ *
+ * Confetti is fired via `useConfetti` the first time a "tip" notification
+ * arrives in the current browser session.
  */
 export function useNotifications() {
   const { address } = useWalletContext();
   const { incrementUnread, decrementUnread, resetUnread } = useNotificationsContext();
+  const { fireTipConfetti } = useConfetti();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [page, setPage] = useState(1);
   const addressRef = useRef<string | null>(null);
@@ -39,8 +84,13 @@ export function useNotifications() {
         return next;
       });
       incrementUnread();
+
+      // 🎉 Celebrate the first tip received this session.
+      if (n.type === "tip") {
+        fireTipConfetti();
+      }
     },
-    [incrementUnread]
+    [incrementUnread, fireTipConfetti]
   );
 
   useEffect(() => {
