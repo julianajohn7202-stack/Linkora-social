@@ -171,6 +171,9 @@ importers:
       browser-image-compression:
         specifier: ^2.0.2
         version: 2.0.2
+      canvas-confetti:
+        specifier: 1.9.3
+        version: 1.9.3
       framer-motion:
         specifier: ^12.42.2
         version: 12.42.2(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -207,7 +210,10 @@ importers:
         version: 6.9.1
       "@testing-library/react":
         specifier: ^14.1.2
-        version: 14.3.1(@types/react@19.2.16)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 14.3.1(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      "@types/canvas-confetti":
+        specifier: 1.6.4
+        version: 1.6.4
       "@types/jest":
         specifier: ^29.5.11
         version: 29.5.14
@@ -5521,10 +5527,10 @@ packages:
         integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==,
       }
 
-  "@types/bunyan@1.8.11":
+  "@types/canvas-confetti@1.6.4":
     resolution:
       {
-        integrity: sha512-758fRH7umIMk5qt5ELmRMff4mLDlN+xyYzC+dkPTdKwbSkJFvz6xwyScrytPU0QIBbRRwbiE8/BIg8bpajerNQ==,
+        integrity: sha512-fNyZ/Fdw/Y92X0vv7B+BD6ysHL4xVU5dJcgzgxLdGbn8O3PezZNIJpml44lKM0nsGur+o/6+NZbZeNTt00U1uA==,
       }
 
   "@types/connect@3.4.38":
@@ -7320,6 +7326,12 @@ packages:
     resolution:
       {
         integrity: sha512-yk0l/YSrOnFZk3UROpDLQD9+kC1l4meK/wed583AXrzoarMGJcbRi2Q4RaUYbKxYAsZ8sWmaSa/DsLmdBeI1vQ==,
+      }
+
+  canvas-confetti@1.9.3:
+    resolution:
+      {
+        integrity: sha512-rFfTURMvmVEX1gyXFgn5QMn81bYk70qa0HLzcIOSVEyl57n6o9ItHeBtUSWdvKAPY0xlvBHno4/v3QPrT83q9g==,
       }
 
   cbor-extract@2.2.2:
@@ -19790,9 +19802,7 @@ snapshots:
       "@types/connect": 3.4.38
       "@types/node": 20.17.57
 
-  "@types/bunyan@1.8.11":
-    dependencies:
-      "@types/node": 20.17.57
+  "@types/canvas-confetti@1.6.4": {}
 
   "@types/connect@3.4.38":
     dependencies:
@@ -21416,6 +21426,8 @@ snapshots:
   camelcase@6.3.0: {}
 
   caniuse-lite@1.0.30001791: {}
+
+  canvas-confetti@1.9.3: {}
 
   cbor-extract@2.2.2:
     dependencies:

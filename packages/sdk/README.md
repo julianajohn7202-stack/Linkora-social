@@ -487,3 +487,364 @@ const { posts } = await response.json();
 const post = posts[0];
 console.log(`Post #${post.id} has received ${post.tip_total} stroops in tips`);
 ```
+
+---
+
+## ProfileClient — profile methods
+
+Profile operations are exposed directly on `LinkoraClient`. There is no
+separate `ProfileClient` class — the methods are part of `LinkoraClient`, which extends the
+auto-generated base client with input validation, error normalization, and
+TypeScript convenience wrappers.
+
+### The `Profile` type
+
+```ts
+interface Profile {
+  username: string;
+  creator_token: string; // SEP-41 token contract address
+}
+```
+
+### Methods
+
+| Method                                     | Type                  | Description                                                                |
+| ------------------------------------------ | --------------------- | -------------------------------------------------------------------------- |
+| `getProfile(address)`                      | Read                  | Fetch a profile by Stellar public key. Returns `null` if not found.        |
+| `getProfileCount()`                        | Read                  | Return the total number of registered profiles.                            |
+| `getAddressByUsername(username)`           | Read                  | Resolve a username to its owner's Stellar address, or `null` if not found. |
+| `setProfile(user, username, creatorToken)` | Write (throwaway XDR) | Create or update a profile and link it to a creator token.                 |
+| `deleteProfile(user)`                      | Write (throwaway XDR) | Delete the caller's profile from on-chain storage.                         |
+| `setProfileWithNewToken(params)`           | Write (throwaway XDR) | Deploy a creator token and link it to a new profile in two operations.     |
+
+---
+
+### `getProfile(address)`
+
+Fetch a user's on-chain profile by their Stellar public key.
+
+**Signature**
+
+```ts
+getProfile(address: string): Promise<Profile | null>
+```
+
+| Parameter | Type     | Description                      |
+| --------- | -------- | -------------------------------- |
+| `address` | `string` | Stellar public key (`G…` format) |
+
+**Returns** `Profile | null` — the profile object, or `null` if no profile
+exists for that address.
+
+**Errors thrown**
+
+| Error class         | Code            | When                                         |
+| ------------------- | --------------- | -------------------------------------------- |
+| `NetworkError`      | `NETWORK_ERROR` | RPC call fails or times out.                 |
+| `InvalidInputError` | `INVALID_INPUT` | `address` is not a valid Stellar public key. |
+
+**Example**
+
+```ts
+import { LinkoraClient } from "linkora-sdk";
+
+const client = new LinkoraClient({
+  contractId: "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+});
+
+const profile = await client.getProfile("GBFOY2LJQZ...");
+if (profile) {
+  console.log(`Username: ${profile.username}`);
+  console.log(`Creator token: ${profile.creator_token}`);
+} else {
+  console.log("No profile found for this address.");
+}
+```
+
+---
+
+### `setProfile(user, username, creatorToken)`
+
+Create or update a user's profile on-chain. The caller must own a creator
+token (deployed via the token factory) before calling this.
+
+> **Note:** `setProfile` returns a throwaway-XDR operation string that is not
+> directly submittable. Pass it to `TransactionQueue` or use `prepareCreatePostTx`-style
+> helpers for wallet-ready transactions. See the [API Semantics](#api-semantics) section for details.
+
+**Signature**
+
+```ts
+setProfile(user: string, username: string, creatorToken: string): string
+```
+
+| Parameter      | Type     | Description                                         |
+| -------------- | -------- | --------------------------------------------------- |
+| `user`         | `string` | Stellar public key of the profile owner             |
+| `username`     | `string` | Desired username (non-empty string)                 |
+| `creatorToken` | `string` | Contract address of the user's SEP-41 creator token |
+
+**Returns** Base64-encoded XDR of the transaction operation (throwaway keypair).
+
+**Errors thrown**
+
+| Error class         | Code                | When                                              |
+| ------------------- | ------------------- | ------------------------------------------------- |
+| `InvalidInputError` | `INVALID_INPUT`     | `user` or `creatorToken` is not a valid address.  |
+| `ValidationError`   | `VALIDATION_ERROR`  | `username` is empty or contains only whitespace.  |
+| `SimulationError`   | `SIMULATION_FAILED` | Username is already taken, or contract is paused. |
+
+**Example**
+
+```ts
+import { LinkoraClient, TransactionQueue } from "linkora-sdk";
+
+const client = new LinkoraClient({ contractId, rpcUrl });
+
+// Build the operation (throwaway XDR)
+const opXdr = client.setProfile(
+  "GBFOY2LJQZ...", // user
+  "alice", // username
+  "CABC123DEF..." // creator token contract address
+);
+console.log("Set Profile Op XDR:", opXdr);
+```
+
+**One-shot: deploy token + set profile**
+
+Use `setProfileWithNewToken` to deploy a creator token and link it to a
+new profile in a single call that returns two sequential operation XDRs:
+
+```ts
+const [deployOp, profileOp] = await client.setProfileWithNewToken({
+  user: "GBFOY2LJQZ...",
+  username: "alice",
+  tokenParams: {
+    name: "Alice Token",
+    symbol: "ALC",
+    decimals: 7,
+    initialSupply: 1_000_000n,
+  },
+});
+// Submit deployOp first, then profileOp
+```
+
+> `setProfileWithNewToken` requires `tokenFactoryId` to be set in
+> `ClientConfig`. It throws `ValidationError` if omitted.
+
+---
+
+### `deleteProfile(user)`
+
+Remove the caller's profile from on-chain storage. All associated storage keys
+are cleaned up lazily via `batch_cleanup_profile`.
+
+**Signature**
+
+```ts
+deleteProfile(user: string): string
+```
+
+| Parameter | Type     | Description                             |
+| --------- | -------- | --------------------------------------- |
+| `user`    | `string` | Stellar public key of the profile owner |
+
+**Returns** Base64-encoded XDR of the transaction operation (throwaway keypair).
+
+**Errors thrown**
+
+| Error class         | Code                | When                             |
+| ------------------- | ------------------- | -------------------------------- |
+| `InvalidInputError` | `INVALID_INPUT`     | `user` is not a valid address.   |
+| `SimulationError`   | `SIMULATION_FAILED` | Profile does not exist on-chain. |
+
+**Example**
+
+```ts
+const opXdr = client.deleteProfile("GBFOY2LJQZ...");
+console.log("Delete Profile Op XDR:", opXdr);
+```
+
+---
+
+### `getProfileCount()`
+
+Return the total number of profiles that have been registered on the platform.
+
+**Signature**
+
+```ts
+getProfileCount(): Promise<bigint>
+```
+
+**Returns** `bigint` — the total profile count.
+
+**Errors thrown**
+
+| Error class    | Code            | When                         |
+| -------------- | --------------- | ---------------------------- |
+| `NetworkError` | `NETWORK_ERROR` | RPC call fails or times out. |
+
+**Example**
+
+```ts
+const count = await client.getProfileCount();
+console.log(`Total registered users: ${count.toString()}`);
+```
+
+---
+
+### `getAddressByUsername(username)`
+
+Resolve a username string to its owner's Stellar public key. Usernames are
+unique on-chain — each username maps to exactly one address.
+
+**Signature**
+
+```ts
+getAddressByUsername(username: string): Promise<string | null>
+```
+
+| Parameter  | Type     | Description                              |
+| ---------- | -------- | ---------------------------------------- |
+| `username` | `string` | The username to look up (case-sensitive) |
+
+**Returns** `string | null` — the owner's Stellar public key, or `null` if
+the username is not registered.
+
+**Errors thrown**
+
+| Error class    | Code            | When                         |
+| -------------- | --------------- | ---------------------------- |
+| `NetworkError` | `NETWORK_ERROR` | RPC call fails or times out. |
+
+**Example**
+
+```ts
+const address = await client.getAddressByUsername("alice");
+if (address) {
+  const profile = await client.getProfile(address);
+  console.log(`alice's creator token: ${profile?.creator_token}`);
+} else {
+  console.log("Username 'alice' is not registered.");
+}
+```
+
+---
+
+### `searchProfiles` — off-chain full-text search
+
+The contract does not expose a profile search function on-chain. Full-text
+profile search is served by the **indexer** (`services/indexer`) via its REST
+API. Use `getAddressByUsername` for exact-username lookups on-chain; use the
+indexer search endpoint for prefix or fuzzy matching.
+
+**Indexer search endpoint**
+
+```
+GET /api/search?q=<query>&type=profile&limit=<n>
+```
+
+| Parameter | Type     | Default | Description                               |
+| --------- | -------- | ------- | ----------------------------------------- |
+| `q`       | `string` | —       | Search query (username prefix or keyword) |
+| `type`    | `string` | all     | Filter to `profile` results only          |
+| `limit`   | `number` | 20      | Maximum results to return                 |
+
+**TypeScript example**
+
+```ts
+interface ProfileSearchResult {
+  address: string;
+  username: string;
+  creator_token: string;
+}
+
+async function searchProfiles(
+  indexerUrl: string,
+  query: string,
+  limit = 20
+): Promise<ProfileSearchResult[]> {
+  const url = new URL("/api/search", indexerUrl);
+  url.searchParams.set("q", query);
+  url.searchParams.set("type", "profile");
+  url.searchParams.set("limit", String(limit));
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Indexer search failed: HTTP ${res.status}`);
+  const json = (await res.json()) as { profiles: ProfileSearchResult[] };
+  return json.profiles ?? [];
+}
+
+// Usage
+const results = await searchProfiles("https://indexer.linkora.example", "ali");
+for (const r of results) {
+  console.log(`${r.username} → ${r.address}`);
+}
+```
+
+> **Exact lookup vs search:** For auth flows that require knowing an exact
+> owner address, always use `client.getAddressByUsername(username)` — it reads
+> directly from the contract and is authoritative. The indexer search endpoint
+> is eventually consistent and best suited for discovery UIs.
+
+---
+
+### Error reference
+
+All profile methods throw subclasses of `LinkoraError`. Import them from
+`linkora-sdk`:
+
+```ts
+import {
+  NotFoundError,
+  InvalidInputError,
+  ValidationError,
+  NetworkError,
+  SimulationError,
+} from "linkora-sdk";
+```
+
+| Error class         | `code`              | Typical cause                                              |
+| ------------------- | ------------------- | ---------------------------------------------------------- |
+| `InvalidInputError` | `INVALID_INPUT`     | `address` or `creatorToken` is not a valid Stellar key.    |
+| `ValidationError`   | `VALIDATION_ERROR`  | Structural validation failed (e.g., empty username).       |
+| `NotFoundError`     | `NOT_FOUND`         | Profile, username, or resource does not exist on-chain.    |
+| `NetworkError`      | `NETWORK_ERROR`     | RPC / Horizon request failed or timed out.                 |
+| `SimulationError`   | `SIMULATION_FAILED` | Contract simulation failed (username taken, paused, etc.). |
+
+**Example error handling**
+
+```ts
+import {
+  LinkoraClient,
+  NotFoundError,
+  InvalidInputError,
+  NetworkError,
+  SimulationError,
+} from "linkora-sdk";
+
+const client = new LinkoraClient({ contractId, rpcUrl });
+
+async function fetchProfile(address: string) {
+  try {
+    const profile = await client.getProfile(address);
+    if (!profile) {
+      console.log("Profile not found.");
+      return;
+    }
+    console.log(`Username: ${profile.username}`);
+  } catch (err) {
+    if (err instanceof InvalidInputError) {
+      console.error("Bad address format:", err.message);
+    } else if (err instanceof NetworkError) {
+      console.error("RPC unreachable:", err.message);
+    } else if (err instanceof SimulationError) {
+      console.error("Contract error:", err.message, err.hostError);
+    } else {
+      throw err;
+    }
+  }
+}
+```
