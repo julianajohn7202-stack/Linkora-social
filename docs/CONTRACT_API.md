@@ -1,9 +1,9 @@
 # Linkora API Reference
 
-> **Scope note.** This document currently covers **HTTP request authentication** for the
-> indexer's REST API. The Soroban contract function reference, storage layout, and event
-> schema are not here yet — see `packages/contracts` and the README API table in the
-> meantime.
+> **Scope note.** This document covers **HTTP request authentication** for the indexer's REST
+> API and the **Reputation / Post Scoring module**. The Soroban contract function reference,
+> complete storage layout, and event schema are not here yet — see `packages/contracts` and
+> the README API table in the meantime.
 
 ---
 
@@ -18,6 +18,15 @@
 7. [Worked Example](#7-worked-example)
 8. [Protected Endpoints](#8-protected-endpoints)
 9. [Known Limitations of v1](#9-known-limitations-of-v1)
+10. [Reputation Module (Post Scoring)](#10-reputation-module-post-scoring)
+    - [10.1 Overview and Implementation Status](#101-overview-and-implementation-status)
+    - [10.2 Storage](#102-storage)
+    - [10.3 Scoring Signals and Formula](#103-scoring-signals-and-formula)
+    - [10.4 Recency Decay](#104-recency-decay)
+    - [10.5 Tier Thresholds](#105-tier-thresholds)
+    - [10.6 Reading Scores via the Indexer API](#106-reading-scores-via-the-indexer-api)
+    - [10.7 Score Refresh Lifecycle](#107-score-refresh-lifecycle)
+    - [10.8 Planned: on-chain Reputation and SDK Integration](#108-planned-on-chain-reputation-and-sdk-integration)
 
 ---
 
@@ -309,3 +318,309 @@ Every protected endpoint is JSON-only today, so this is latent rather than live.
 live vulnerability the moment a protected route accepts another content type. **Any new
 protected endpoint must be JSON**, or the raw-body capture in
 `services/indexer/src/middleware/rawBody.ts` must be widened to cover its content type first.
+
+---
+
+## 10. Reputation Module (Post Scoring)
+
+### 10.1 Overview and Implementation Status
+
+The Reputation Module governs how posts are ranked for discovery. In the current implementation
+the entire scoring pipeline is **off-chain**, running inside the indexer service
+(`services/indexer`). There is no on-chain reputation contract yet.
+
+Two files referenced in the project issue tracker are **planned but not yet created**:
+
+| Planned file                        | Purpose                                             |
+| ----------------------------------- | --------------------------------------------------- |
+| `src/reputation.rs`                 | On-chain Soroban contract for per-user reputation   |
+| `packages/reputation/src/scorer.ts` | TypeScript scorer to be consumed by SDK and clients |
+
+Until those files are shipped, all scoring logic lives in the places listed below. This
+section documents that live system.
+
+| File                                              | Role                                       |
+| ------------------------------------------------- | ------------------------------------------ |
+| `services/indexer/migrations/009_post_scores.sql` | DDL — defines the `post_scores` view       |
+| `services/indexer/src/score-refresh.ts`           | `ScoreRefreshService` — refresh scheduling |
+| `services/indexer/src/api/routes/feed.ts`         | `GET /feed/explore` — score-ranked feed    |
+| `services/indexer/src/metrics.ts`                 | `score_refresh_deferred_total` counter     |
+
+---
+
+### 10.2 Storage
+
+Scores are not stored per row in the `posts` table. Instead they are materialised into a
+separate read model that is recomputed from the `posts` source table on a schedule.
+
+```sql
+-- services/indexer/migrations/009_post_scores.sql
+CREATE MATERIALIZED VIEW IF NOT EXISTS post_scores AS
+SELECT
+    p.id,
+    p.author,
+    p.content,
+    p.tip_total,
+    p.like_count,
+    p.created_at,
+    (
+        100 +
+        (p.like_count * 5) +
+        (p.tip_total::numeric / 1000000) -
+        EXTRACT(EPOCH FROM (NOW() - p.created_at)) / 3600
+    )::integer AS score,
+    NOW() AS last_updated
+FROM posts p
+WHERE p.deleted_at IS NULL;
+```
+
+Three indexes are maintained on the view:
+
+| Index                    | Columns                   | Purpose                                               |
+| ------------------------ | ------------------------- | ----------------------------------------------------- |
+| `idx_post_scores_score`  | `score DESC`              | Primary ordering for the explore feed                 |
+| `idx_post_scores_author` | `author, created_at DESC` | Per-author lookups in the following feed              |
+| `idx_post_scores_id`     | `id` (unique)             | Required for `REFRESH MATERIALIZED VIEW CONCURRENTLY` |
+
+The view is refreshed via `REFRESH MATERIALIZED VIEW CONCURRENTLY post_scores`. Because that
+statement requires exclusive access for the brief final swap, only one refresh can run at a
+time. The scheduler handles collisions with retries — see [§10.7](#107-score-refresh-lifecycle).
+
+---
+
+### 10.3 Scoring Signals and Formula
+
+The score for a post is a single integer computed at refresh time. Four signals feed into it:
+
+| Signal     | Weight                               | Source column |
+| ---------- | ------------------------------------ | ------------- |
+| Base score | +100 (constant for every live post)  | —             |
+| Likes      | +5 per like                          | `like_count`  |
+| Tips       | +1 per 1 000 000 stroops (≈ 0.1 XLM) | `tip_total`   |
+| Recency    | −1 per hour since `created_at`       | `created_at`  |
+
+The formula in full:
+
+```
+score = 100
+      + (like_count × 5)
+      + (tip_total / 1_000_000)
+      − floor(age_in_seconds / 3600)
+```
+
+`tip_total` is stored in **stroops** (the smallest Stellar unit, 1 XLM = 10 000 000 stroops).
+Dividing by 1 000 000 normalises it so that roughly 0.1 XLM of tips equals 1 score point.
+
+Example — a post with 10 likes and 1 XLM tip (10 000 000 stroops), created 2 hours ago:
+
+```
+100 + (10 × 5) + (10_000_000 / 1_000_000) − 2
+= 100 + 50 + 10 − 2
+= 158
+```
+
+Because the score is cast to `integer` the result is truncated (not rounded) toward zero.
+
+---
+
+### 10.4 Recency Decay
+
+The decay term is linear, not exponential:
+
+```
+decay = floor(age_in_seconds / 3600)   -- 1 point per hour
+```
+
+A brand-new post starts with a base of 100 and loses exactly 1 point for every hour it ages,
+regardless of engagement. This means a post with zero engagement reaches a score of 0 after
+100 hours (≈ 4.2 days) and goes negative thereafter.
+
+Posts are never removed from `post_scores` due to a low score alone. They remain in the view
+until their corresponding row in `posts` is soft-deleted (`deleted_at IS NOT NULL`), at
+which point the view excludes them on the next refresh.
+
+> **Planned:** The future `packages/reputation/src/scorer.ts` is expected to expose
+> configurable decay parameters (half-life, floor, per-signal weights). Until then the
+> weights above are hard-coded in the migration SQL and can only be changed by a new
+> migration.
+
+---
+
+### 10.5 Tier Thresholds
+
+There are no tier thresholds defined in the current codebase. The score is a continuous
+integer used only for ordering — no "Bronze / Silver / Gold" classification exists in the
+database schema, the indexer API, or the contracts.
+
+Tier labels are expected to be introduced in either:
+
+- `packages/reputation/src/scorer.ts` (off-chain classification), or
+- `src/reputation.rs` (on-chain reputation tiers backed by Soroban storage).
+
+Neither file exists yet. If you are building a client that wants to display tiers today,
+you must define the thresholds locally. The following illustrative ranges are **not**
+enforced by the system:
+
+| Tier     | Score range (illustrative) |
+| -------- | -------------------------- |
+| Rising   | 0 – 99                     |
+| Active   | 100 – 249                  |
+| Popular  | 250 – 499                  |
+| Trending | 500 +                      |
+
+These numbers are provided as a starting point only and are subject to change once the
+official tier spec is shipped.
+
+---
+
+### 10.6 Reading Scores via the Indexer API
+
+There are no SDK methods for reading scores — the SDK only wraps Soroban contract calls and
+does not talk to the indexer REST API directly. Scores are exposed through a single indexer
+endpoint.
+
+#### `GET /feed/explore`
+
+Returns posts ranked by descending score. Supports cursor-based pagination and optional tag
+filtering.
+
+| Parameter | Type   | Required | Description                                                               |
+| --------- | ------ | -------- | ------------------------------------------------------------------------- |
+| `limit`   | number | no       | Number of posts to return (default 20, max 100)                           |
+| `cursor`  | number | no       | Exclusive upper bound on `score`; omit on first page                      |
+| `tag`     | string | no       | Filter to posts whose `tags` array contains this value (case-insensitive) |
+
+Example — first page of explore feed:
+
+```
+GET /api/feed/explore?limit=10
+```
+
+```json
+{
+  "posts": [
+    {
+      "id": 42,
+      "author": "GABC...XYZ",
+      "content": "Hello Linkora!",
+      "tags": ["intro"],
+      "tip_total": 10000000,
+      "like_count": 12,
+      "created_at": "2026-09-29T10:00:00.000Z",
+      "score": 162
+    }
+  ],
+  "has_more": false,
+  "next_cursor": 162
+}
+```
+
+Example — next page using the `next_cursor` from the previous response:
+
+```
+GET /api/feed/explore?limit=10&cursor=162
+```
+
+The server queries `post_scores WHERE score < :cursor ORDER BY score DESC LIMIT :limit`.
+Pass `next_cursor` from the previous response as `cursor` on the next request. When
+`has_more` is `false`, you have reached the end of the feed.
+
+Example — fetch explore feed directly with `fetch`:
+
+```typescript
+async function fetchExploreFeed(
+  baseUrl: string,
+  limit = 20,
+  cursor?: number,
+  tag?: string
+): Promise<{ posts: Post[]; hasMore: boolean; nextCursor: number | null }> {
+  const url = new URL("/api/feed/explore", baseUrl);
+  url.searchParams.set("limit", String(limit));
+  if (cursor !== undefined) url.searchParams.set("cursor", String(cursor));
+  if (tag) url.searchParams.set("tag", tag);
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Explore feed request failed: ${res.status}`);
+
+  const data = await res.json();
+  return {
+    posts: data.posts,
+    hasMore: data.has_more,
+    nextCursor: data.next_cursor,
+  };
+}
+```
+
+Reading a specific post's score is not a dedicated endpoint. To read the score for a known
+post ID, query the explore feed and look up by `id`, or query the `post_scores` view directly
+if you have database access:
+
+```sql
+SELECT id, score, last_updated
+FROM post_scores
+WHERE id = $1;
+```
+
+---
+
+### 10.7 Score Refresh Lifecycle
+
+`ScoreRefreshService` (`services/indexer/src/score-refresh.ts`) owns the refresh schedule.
+
+**Defaults:**
+
+| Parameter                | Default  | Description                                       |
+| ------------------------ | -------- | ------------------------------------------------- |
+| `refreshIntervalMinutes` | `5`      | Cron cadence — `*/5 * * * *`                      |
+| `statementTimeoutMs`     | `30 000` | Per-attempt `SET LOCAL statement_timeout`         |
+| `maxRetries`             | `5`      | Maximum consecutive retries after first collision |
+| `retryBaseDelayMs`       | `1 000`  | Base delay for exponential backoff                |
+| `retryMaxDelayMs`        | `30 000` | Upper cap on backoff delay                        |
+| `jitterFraction`         | `0.25`   | Fraction of interval used for startup jitter      |
+
+**Refresh flow:**
+
+1. A cron job fires every `refreshIntervalMinutes` minutes plus a random jitter of up to
+   `jitterFraction × interval`. The jitter desynchronises multiple indexer replicas so they
+   do not all fire at the same clock boundary.
+2. The service opens a dedicated connection, issues `BEGIN`, sets
+   `SET LOCAL statement_timeout`, and runs
+   `REFRESH MATERIALIZED VIEW CONCURRENTLY post_scores`.
+3. On success it commits and logs `[score-refresh] Successfully refreshed post_scores`.
+4. On a transient collision (concurrent refresh in progress, lock timeout `55P03`,
+   statement timeout `57014`, deadlock `40P01`, serialization failure `40001`) it rolls
+   back, emits the `score_refresh_deferred_total` Prometheus counter, logs a structured
+   JSON event, and retries with **exponential backoff + full jitter**:
+
+```
+delay = random(floor(cap / 2), cap)   where  cap = min(base × 2^attempt, maxDelay)
+```
+
+5. After `maxRetries` consecutive transient failures, or on any non-transient error, the
+   exception is re-thrown. The scheduler catches it and keeps itself alive for the next
+   scheduled run.
+
+The `score_refresh_deferred_total` counter is exposed in the Prometheus text format via the
+metrics endpoint and is the primary signal for refresh contention in production.
+
+---
+
+### 10.8 Planned: on-chain Reputation and SDK Integration
+
+The items below are tracked in the issue backlog and are listed here so integrators know
+what is coming.
+
+**`src/reputation.rs`** — a Soroban contract module that will add:
+
+- Per-user reputation scores stored in Soroban persistent storage.
+- On-chain storage keys for reputation data (e.g. `Reputation(Address) -> u64`).
+- Tier classification enforced at the contract level.
+- Events emitted on reputation changes (`ReputationUpdated`, `TierChanged`).
+
+**`packages/reputation/src/scorer.ts`** — a TypeScript scorer that will:
+
+- Expose a typed `getScore(postId: number): Promise<number>` helper wrapping the indexer API.
+- Provide `classifyTier(score: number): Tier` with the official thresholds.
+- Be consumable by both `apps/web` and `apps/mobile` without duplicating fetch logic.
+
+Until these files land, use the `GET /api/feed/explore` endpoint directly (see [§10.6](#106-reading-scores-via-the-indexer-api)) and define any tier logic locally.
