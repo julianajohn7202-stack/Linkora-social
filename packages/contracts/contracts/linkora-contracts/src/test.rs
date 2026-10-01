@@ -8549,3 +8549,113 @@ fn test_batch_cleanup_post_emits_event_summary() {
     client.batch_cleanup_post(&post_id, &10);
     assert!(client.get_post(&post_id).is_none());
 }
+
+// ── Tests for profile updates (good-first-issue #2) ──────────────────────────
+//
+// `set_profile` is used for both initial registration and subsequent updates.
+// The existing tests only verify initial creation. These tests verify that
+// calling `set_profile` again on an existing profile correctly updates the
+// stored values and keeps the reverse username index consistent.
+
+#[test]
+fn test_set_profile_update_username_is_reflected_in_get_profile() {
+    // After calling set_profile twice on the same user with a different
+    // username, get_profile must return the new username.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _) = setup_contract(&env);
+
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.set_profile(&user, &String::from_str(&env, "alice"), &token);
+
+    // Update username to "alice2"
+    client.set_profile(&user, &String::from_str(&env, "alice2"), &token);
+
+    let profile = client.get_profile(&user).expect("profile must exist after update");
+    assert_eq!(
+        profile.username,
+        String::from_str(&env, "alice2"),
+        "get_profile must return the updated username"
+    );
+}
+
+#[test]
+fn test_set_profile_update_creator_token_is_reflected_in_get_profile() {
+    // After calling set_profile twice on the same user with a different
+    // creator_token, get_profile must return the new creator_token.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _) = setup_contract(&env);
+
+    let user = Address::generate(&env);
+    let token_v1 = Address::generate(&env);
+    let token_v2 = Address::generate(&env);
+
+    client.set_profile(&user, &String::from_str(&env, "bob"), &token_v1);
+
+    // Update creator token only (username unchanged)
+    client.set_profile(&user, &String::from_str(&env, "bob"), &token_v2);
+
+    let profile = client.get_profile(&user).expect("profile must exist after update");
+    assert_eq!(
+        profile.creator_token, token_v2,
+        "get_profile must return the updated creator_token"
+    );
+}
+
+#[test]
+fn test_set_profile_update_old_username_released_for_reuse() {
+    // When a user changes their username from "alice" to "alice2", the old
+    // username "alice" must be released from the reverse index so that another
+    // user can claim it.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _) = setup_contract(&env);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    // user1 registers "alice"
+    client.set_profile(&user1, &String::from_str(&env, "alice"), &token);
+
+    // user1 updates to "alice2" — "alice" should now be free
+    client.set_profile(&user1, &String::from_str(&env, "alice2"), &token);
+
+    // user2 can now claim "alice"
+    client.set_profile(&user2, &String::from_str(&env, "alice"), &token);
+
+    assert_eq!(
+        client.get_address_by_username(&String::from_str(&env, "alice")),
+        Some(user2.clone()),
+        "old username must be claimable by a new user after the original owner updates"
+    );
+    assert_eq!(
+        client.get_address_by_username(&String::from_str(&env, "alice2")),
+        Some(user1.clone()),
+        "updated username must resolve to the original owner"
+    );
+}
+
+#[test]
+fn test_set_profile_update_does_not_change_profile_address_field() {
+    // The `address` field on Profile must always equal the owner's address
+    // even after an update.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _) = setup_contract(&env);
+
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.set_profile(&user, &String::from_str(&env, "charlie"), &token);
+    client.set_profile(&user, &String::from_str(&env, "charlie2"), &token);
+
+    let profile = client.get_profile(&user).expect("profile must exist");
+    assert_eq!(
+        profile.address, user,
+        "address field must remain unchanged after a profile update"
+    );
+}
