@@ -1,86 +1,91 @@
 import { renderHook, act } from "@testing-library/react";
 import { useConfetti } from "../useConfetti";
 
-// canvas-confetti exports a callable function as its default export.
-// We need the mock to be callable AND have a `.default` property pointing to
-// the same function, because our code does:
-//   const { default: confetti } = await import("canvas-confetti");
+// Mock canvas-confetti so no real canvas operations run in jsdom.
 const mockConfetti = jest.fn();
+jest.mock("canvas-confetti", () => ({
+  __esModule: true,
+  default: (...args: unknown[]) => mockConfetti(...args),
+}));
 
-jest.mock("canvas-confetti", () => {
-  const fn = jest.fn();
-  // Make the module look like an ES-module default export in Jest's CJS
-  // module system: the module IS the function, and `.default` also points to it.
-  (fn as any).default = fn;
-  return fn;
-});
-
-// Grab the module reference after the mock is installed.
-beforeAll(async () => {
-  const mod = await import("canvas-confetti");
-  // Replace the local reference so assertions can use it.
-  mockConfetti.mockImplementation((opts: unknown) => (mod as any).default(opts));
-});
+const SESSION_KEY = "linkora:confetti:first-tip-shown";
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  mockConfetti.mockClear();
   sessionStorage.clear();
-  // Default: motion is allowed
-  Object.defineProperty(window, "matchMedia", {
-    writable: true,
-    value: jest.fn().mockReturnValue({ matches: false }),
-  });
 });
 
 describe("useConfetti", () => {
-  it("fires confetti on the first call", async () => {
+  it("fires confetti on first call", async () => {
     const { result } = renderHook(() => useConfetti());
+
     await act(async () => {
-      await result.current.fireTipConfetti();
+      await result.current.fireConfetti();
     });
-    // The canvas-confetti module function should have been called once
-    const mod = await import("canvas-confetti");
-    expect((mod as any).default).toHaveBeenCalledTimes(1);
+
+    // Two volleys should be fired (left + right origin)
+    expect(mockConfetti).toHaveBeenCalledTimes(2);
   });
 
   it("does not fire confetti a second time in the same session", async () => {
     const { result } = renderHook(() => useConfetti());
+
     await act(async () => {
-      await result.current.fireTipConfetti();
-      await result.current.fireTipConfetti();
+      await result.current.fireConfetti();
     });
-    const mod = await import("canvas-confetti");
-    expect((mod as any).default).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await result.current.fireConfetti();
+    });
+
+    // Still only two calls total — second invocation is suppressed by session guard
+    expect(mockConfetti).toHaveBeenCalledTimes(2);
   });
 
-  it("does not fire if prefers-reduced-motion is set", async () => {
+  it("sets the session key after first fire", async () => {
+    const { result } = renderHook(() => useConfetti());
+
+    await act(async () => {
+      await result.current.fireConfetti();
+    });
+
+    expect(sessionStorage.getItem(SESSION_KEY)).toBe("1");
+  });
+
+  it("does not fire when session key is already set", async () => {
+    sessionStorage.setItem(SESSION_KEY, "1");
+    const { result } = renderHook(() => useConfetti());
+
+    await act(async () => {
+      await result.current.fireConfetti();
+    });
+
+    expect(mockConfetti).not.toHaveBeenCalled();
+  });
+
+  it("does not fire when prefers-reduced-motion is set", async () => {
+    // Override matchMedia to report reduced motion
     Object.defineProperty(window, "matchMedia", {
       writable: true,
-      value: jest.fn().mockReturnValue({ matches: true }),
+      value: (query: string) => ({
+        matches: query === "(prefers-reduced-motion: reduce)",
+        media: query,
+        onchange: null,
+        addListener: jest.fn(),
+        removeListener: jest.fn(),
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        dispatchEvent: jest.fn(),
+      }),
     });
-    const { result } = renderHook(() => useConfetti());
-    await act(async () => {
-      await result.current.fireTipConfetti();
-    });
-    const mod = await import("canvas-confetti");
-    expect((mod as any).default).not.toHaveBeenCalled();
-  });
 
-  it("sets the sessionStorage key after firing", async () => {
     const { result } = renderHook(() => useConfetti());
-    await act(async () => {
-      await result.current.fireTipConfetti();
-    });
-    expect(sessionStorage.getItem("linkora:confetti:tip_fired")).toBe("1");
-  });
 
-  it("does not fire if the sessionStorage key is already set", async () => {
-    sessionStorage.setItem("linkora:confetti:tip_fired", "1");
-    const { result } = renderHook(() => useConfetti());
     await act(async () => {
-      await result.current.fireTipConfetti();
+      await result.current.fireConfetti();
     });
-    const mod = await import("canvas-confetti");
-    expect((mod as any).default).not.toHaveBeenCalled();
+
+    expect(mockConfetti).not.toHaveBeenCalled();
+    // Session key should NOT be set when motion is reduced (no milestone recorded)
+    expect(sessionStorage.getItem(SESSION_KEY)).toBeNull();
   });
 });
