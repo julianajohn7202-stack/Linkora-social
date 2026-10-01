@@ -2,8 +2,8 @@
 // registered before express (or any other library) is loaded.
 import "./tracing";
 
-import express, { Request, Response } from "express";
-import { trace } from "@opentelemetry/sdk-node";
+import express, { type Application, Request, Response } from "express";
+import { trace } from "@opentelemetry/api";
 import { pino } from "pino";
 
 const logger = pino({
@@ -18,7 +18,7 @@ const logger = pino({
   }),
 });
 
-const app = express();
+const app: Application = express();
 app.use(express.json());
 
 const tracer = trace.getTracer("notification");

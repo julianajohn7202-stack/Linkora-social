@@ -3,16 +3,19 @@
     "target": "ES2022",
     "module": "CommonJS",
     "lib": ["ES2022"],
-    "outDir": "dist",
-    "rootDir": "src",
     "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
     "paths": {
       "@linkora/types": ["../../packages/types/src/index.ts"]
     }

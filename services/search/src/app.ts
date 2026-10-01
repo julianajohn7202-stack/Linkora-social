@@ -1,4 +1,10 @@
-import express, { NextFunction, Request, Response } from "express";
+import express, {
+  type Application,
+  NextFunction,
+  Request,
+  RequestHandler,
+  Response,
+} from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
@@ -36,20 +42,21 @@ function validateQuery(schema: z.ZodSchema) {
 // App factory — exported so tests can instantiate without binding a port
 // ---------------------------------------------------------------------------
 
-export function createApp() {
-  const app = express();
+export function createApp(): Application {
+  const app: Application = express();
 
   app.use(helmet());
   app.use(express.json());
 
   // Basic rate limiting: 60 requests / minute per IP
+  // Cast via unknown to resolve express v4/v5 type mismatch in the pnpm store
   app.use(
     rateLimit({
       windowMs: 60_000,
       max: 60,
       standardHeaders: true,
       legacyHeaders: false,
-    }),
+    }) as unknown as RequestHandler
   );
 
   // ---------------------------------------------------------------------------
@@ -96,7 +103,7 @@ export function createApp() {
         logger.error({ err, q }, "search/profiles error");
         res.status(500).json({ error: "Internal server error" });
       }
-    },
+    }
   );
 
   /**
@@ -117,7 +124,7 @@ export function createApp() {
         logger.error({ err, q }, "search/posts error");
         res.status(500).json({ error: "Internal server error" });
       }
-    },
+    }
   );
 
   return app;

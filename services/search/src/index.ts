@@ -1,11 +1,11 @@
-import express, { Request, Response } from "express";
+import express, { type Application, Request, Response } from "express";
 import helmet from "helmet";
 import { Pool } from "pg";
 
 const PORT = parseInt(process.env.PORT ?? "3002", 10);
 const DATABASE_URL = process.env.DATABASE_URL;
 
-const app = express();
+const app: Application = express();
 app.use(helmet());
 app.use(express.json());
 

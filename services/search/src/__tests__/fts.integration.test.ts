@@ -1,4 +1,4 @@
-import { query, closeDbPool, getDbPool } from "../db";
+import { query, closeDbPool } from "../db";
 
 describe("PostgreSQL Full-Text Search (FTS) Integration", () => {
   let isDbAvailable = false;
@@ -59,7 +59,8 @@ describe("PostgreSQL Full-Text Search (FTS) Integration", () => {
     );
 
     expect(res.rows.length).toBeGreaterThanOrEqual(1);
-    expect(res.rows[0].content).toContain("Stellar");
-    expect(Number(res.rows[0].rank)).toBeGreaterThan(0);
+    // rows[0] is asserted to exist by the length check above
+    expect(res.rows[0]!.content).toContain("Stellar");
+    expect(Number(res.rows[0]!.rank)).toBeGreaterThan(0);
   });
 });

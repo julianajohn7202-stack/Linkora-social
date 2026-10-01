@@ -1,10 +1,10 @@
-import express, { Request, Response } from "express";
+import express, { type Application, Request, Response } from "express";
 import helmet from "helmet";
 import sharp from "sharp";
 
 const PORT = parseInt(process.env.PORT ?? "3003", 10);
 
-const app = express();
+const app: Application = express();
 app.use(helmet());
 
 // ── Health endpoint ────────────────────────────────────────────────────────
