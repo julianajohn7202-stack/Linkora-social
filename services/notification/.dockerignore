@@ -1,9 +1,6 @@
 node_modules
 dist
-.git
-.env
-.env.*
+coverage
+.turbo
 *.test.ts
 __tests__
-.coverage
-tsconfig.tsbuildinfo

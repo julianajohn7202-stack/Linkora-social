@@ -1,44 +1,57 @@
+// tracing MUST be the very first import so OTel auto-instrumentations are
+// registered before express (or any other library) is loaded.
+import "./tracing";
+
 import express, { Request, Response } from "express";
-import helmet from "helmet";
-import { Pool } from "pg";
-import { Redis } from "ioredis";
+import { trace } from "@opentelemetry/sdk-node";
+import { pino } from "pino";
 
-const PORT = parseInt(process.env.PORT ?? "3004", 10);
-const DATABASE_URL = process.env.DATABASE_URL;
-const REDIS_URL = process.env.REDIS_URL;
-
-const app = express();
-app.use(helmet());
-app.use(express.json());
-
-// PostgreSQL connection pool
-const pool = new Pool({ connectionString: DATABASE_URL });
-
-// Redis client for pub/sub fan-out
-const redis = new Redis(REDIS_URL ?? "redis://redis:6379", {
-  lazyConnect: true,
-  enableOfflineQueue: false,
+const logger = pino({
+  level: process.env["LOG_LEVEL"] ?? "info",
+  base: { service: "notification" },
+  timestamp: pino.stdTimeFunctions.isoTime,
+  ...(process.env["NODE_ENV"] !== "production" && {
+    transport: {
+      target: "pino-pretty",
+      options: { colorize: true, ignore: "pid,hostname", translateTime: "SYS:standard" },
+    },
+  }),
 });
 
-// ── Health endpoint ────────────────────────────────────────────────────────
-app.get("/health", async (_req: Request, res: Response) => {
+const app = express();
+app.use(express.json());
+
+const tracer = trace.getTracer("notification");
+
+/** GET /health — liveness probe with a sample manual span */
+app.get("/health", (_req: Request, res: Response) => {
+  const span = tracer.startSpan("notification.health.check");
   try {
-    await pool.query("SELECT 1");
-    const redisPing = await redis.ping().catch(() => "unreachable");
-    res.json({
-      status: "ok",
-      service: "notification",
-      db: "connected",
-      redis: redisPing === "PONG" ? "connected" : "unreachable",
-    });
-  } catch (_err) {
-    res.status(503).json({ status: "error", service: "notification" });
+    res.json({ status: "ok", service: "notification" });
+  } finally {
+    span.end();
   }
 });
 
-// ── Start server ───────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`[notification] listening on port ${PORT}`);
+/** GET /health/ready — readiness probe */
+app.get("/health/ready", (_req: Request, res: Response) => {
+  res.json({ status: "ready", service: "notification" });
 });
 
-export default app;
+const PORT = parseInt(process.env["PORT"] ?? "3002", 10);
+
+const server = app.listen(PORT, () => {
+  logger.info({ port: PORT }, "notification service listening");
+});
+
+// Graceful shutdown
+function shutdown() {
+  logger.info("shutting down notification service");
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10_000).unref();
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
+export { app };
