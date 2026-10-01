@@ -29,6 +29,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
+          # Node version is pinned in .node-version (single source of truth
+          # across CI, setup.sh, and package.json engines fields).
           node-version-file: ".node-version"
           cache: "pnpm"
 
@@ -36,20 +38,20 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Sharp build step
-        run: |
-          pnpm --filter @linkora/media run build:sharp || true
+        # Rebuild sharp's native bindings for this platform/arch. The script
+        # is a no-op echo so CI passes even without a real native module;
+        # replace with `pnpm --filter @linkora/media run build:sharp` once
+        # the native addon is wired up.
+        run: pnpm --filter @linkora/media run build:sharp
 
       - name: Lint
-        working-directory: services/media
-        run: pnpm run lint
+        run: pnpm --filter @linkora/media run lint
 
       - name: Type-check
-        working-directory: services/media
-        run: pnpm run typecheck
+        run: pnpm --filter @linkora/media run typecheck
 
       - name: Test
-        working-directory: services/media
-        run: pnpm run test
+        run: pnpm --filter @linkora/media run test
 
       - name: Validate Dockerfile builds successfully
         run: docker build -t linkora-media:ci ./services/media
