@@ -1,0 +1,51 @@
+# GitHub Environment: production
+#
+# This file documents the required protection rules for the `production`
+# environment. The environment itself must be created and configured in the
+# GitHub repository settings UI (Settings → Environments → New environment).
+#
+# Rationale
+# ----------
+# Gating every production deployment behind human approval prevents accidental
+# or automated pushes from reaching production without a review step. All
+# deployment history is visible under the Environments tab of the repository.
+#
+# How to configure (one-time, done by a repository admin)
+# -------------------------------------------------------
+# 1. Go to  https://github.com/<org>/<repo>/settings/environments
+# 2. Click "New environment" and name it `production`.
+# 3. Enable "Required reviewers" and add the team(s) or individual(s) who must
+#    approve deployments (e.g. the @Linkora/core-maintainers team).
+# 4. Set "Deployment branch policy" to "Selected branches" and add `main` as
+#    the only allowed branch.
+# 5. Optionally enable "Prevent self-review" so the person who triggered the
+#    workflow cannot approve their own deployment.
+# 6. Save the environment.
+#
+# Workflow integration
+# --------------------
+# Any workflow job that targets this environment (via `environment: production`)
+# will be paused until an approved reviewer manually approves it in the GitHub
+# Actions UI. The approval request is sent by email/notification to all
+# required reviewers.
+#
+# The `deploy-testnet.yml` workflow has been updated to reference this
+# environment so that every deployment through that workflow is gated.
+
+environment:
+  name: production
+
+  # Protection rules (configure in GitHub UI — these values are for reference).
+  protection_rules:
+    required_reviewers:
+      # Add GitHub usernames or team slugs, e.g.:
+      # - octocat
+      # - org/core-maintainers
+      - required # placeholder — replace with actual reviewer(s)
+    prevent_self_review: true
+
+  deployment_branch_policy:
+    # Only the `main` branch may deploy to production.
+    protected_branches: false
+    custom_branch_policies:
+      - main
