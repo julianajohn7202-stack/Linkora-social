@@ -1,267 +1,209 @@
 # Contributing to Linkora
 
-Thank you for your interest in contributing to Linkora! This guide covers
-everything you need to get up and running, from local setup through submitting
-a pull request and understanding how production deployments are protected.
+Thank you for your interest in contributing! This guide covers everything you
+need to get your environment ready, follow our branch conventions, and get a PR
+merged.
 
 ---
 
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
-2. [Local Setup](#local-setup)
-3. [Project Structure](#project-structure)
-4. [Branch Conventions](#branch-conventions)
-5. [Making Changes](#making-changes)
-6. [Pull Requests](#pull-requests)
-7. [Testing](#testing)
-8. [Code Style](#code-style)
-9. [Production Deployments](#production-deployments)
-10. [Reporting Issues](#reporting-issues)
-11. [License](#license)
+2. [Development Setup](#development-setup)
+3. [Branch Conventions](#branch-conventions)
+4. [Commit Guidelines](#commit-guidelines)
+5. [Pull Request Process](#pull-request-process)
+6. [Branch Protection Rules](#branch-protection-rules)
+7. [Code Style](#code-style)
+8. [Testing](#testing)
 
 ---
 
 ## Prerequisites
 
-| Tool                | Minimum version     | Notes                                              |
-| ------------------- | ------------------- | -------------------------------------------------- |
-| Node.js             | See `.node-version` | Use `nvm use` or `fnm use` to switch automatically |
-| pnpm                | 9+                  | `npm install -g pnpm`                              |
-| Rust + Cargo        | stable              | Required for smart contract work                   |
-| Docker + Compose v2 | Latest              | Required for local services and migration tests    |
-| `gh` CLI            | 2+                  | Required to create PRs from the terminal           |
+| Tool           | Minimum version     | Notes                                |
+| -------------- | ------------------- | ------------------------------------ |
+| Node.js        | See `.node-version` | Managed via `nvm` or `fnm`           |
+| pnpm           | 9.x                 | `npm i -g pnpm`                      |
+| Rust           | stable              | `rustup toolchain install stable`    |
+| Docker         | 24+                 | Required for integration tests       |
+| Docker Compose | v2                  | Bundled with Docker Desktop          |
+| stellar-cli    | latest              | `cargo install --locked stellar-cli` |
+
+Run `./scripts/setup.sh` after cloning — it checks all prerequisites, installs
+dependencies, and builds the contracts.
 
 ---
 
-## Local Setup
+## Development Setup
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/julianajohn7202-stack/Linkora-social.git
+# 1. Fork and clone
+git clone https://github.com/<your-handle>/Linkora-social.git
 cd Linkora-social
 
-# 2. Run the automated setup script
-#    (checks prerequisites, installs deps, builds contracts)
+# 2. Add the canonical upstream remote
+git remote add upstream https://github.com/julianajohn7202-stack/Linkora-social.git
+
+# 3. Run the setup script
 ./scripts/setup.sh
 
-# 3. Copy example environment files
-cp services/indexer/.env.example    services/indexer/.env
-cp services/dm-relay/.env.example   services/dm-relay/.env
-# Fill in DATABASE_URL, SOROBAN_RPC_URL, etc. as instructed in each file.
+# 4. Start the local stack
+docker compose up -d
 
-# 4. Start the local database stack
-docker compose up -d postgres redis
-
-# 5. Start a specific service in watch mode
-pnpm --filter @linkora/indexer dev          # indexer
-pnpm --filter linkora-dm-relay  dev         # DM relay
-
-# Or use the convenience Makefile targets:
-make notification   # notification service
-make search         # search service
-make media          # media service
-make services       # all services in parallel
-```
-
-### Web & Mobile
-
-```bash
-# Web frontend
-cd apps/web && pnpm dev           # http://localhost:3000
-
-# Mobile app (Expo)
-cd apps/mobile && pnpm start      # press 'a' (Android) or 'i' (iOS)
-```
-
----
-
-## Project Structure
-
-```
-apps/
-  web/              Next.js 15 web frontend
-  mobile/           Expo / React Native mobile app
-packages/
-  contracts/        Soroban smart contracts (Rust)
-  sdk/              Typed contract client
-  types/            Shared TypeScript types
-services/
-  indexer/          Off-chain event indexer
-  dm-relay/         E2EE direct-message relay
-  analytics-oracle/ On-chain analytics oracle
-  notification/     Push-notification service
-  search/           Full-text search service
-  media/            Media upload / processing service
-examples/           SDK and mini-app examples
-docs/               Architecture, API, and design docs
-scripts/            Setup, release, and deploy helpers
-tests/              Integration and migration tests
+# 5. Start the web frontend
+cd apps/web && pnpm dev   # http://localhost:3000
 ```
 
 ---
 
 ## Branch Conventions
 
-| Prefix                    | When to use                                 |
-| ------------------------- | ------------------------------------------- |
-| `feat/<issue>-<slug>`     | New feature or enhancement                  |
-| `fix/<issue>-<slug>`      | Bug fix                                     |
-| `chore/<issue>-<slug>`    | Tooling, CI, dependency updates             |
-| `docs/<issue>-<slug>`     | Documentation only                          |
-| `refactor/<issue>-<slug>` | Code restructuring without behaviour change |
+| Type    | Pattern                            | Example                         |
+| ------- | ---------------------------------- | ------------------------------- |
+| Feature | `feat/<issue>-short-description`   | `feat/42-creator-profiles`      |
+| Bug fix | `fix/<issue>-short-description`    | `fix/99-follow-count-overflow`  |
+| Chore   | `chore/<issue>-short-description`  | `chore/120-update-dependencies` |
+| Docs    | `docs/<issue>-short-description`   | `docs/55-indexer-design`        |
+| DevOps  | `devops/<issue>-short-description` | `devops/288-branch-protection`  |
 
-**Examples**
+Rules:
+
+- Branch off from `main`. Always rebase on `upstream/main` before opening a PR.
+- Use lowercase kebab-case.
+- Include the issue number when one exists.
+- Keep branches focused — one logical change per branch.
+
+---
+
+## Commit Guidelines
+
+We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
-feat/282-github-environment-protection
-fix/310-ws-reconnect-backoff
-chore/295-bump-stellar-sdk
+<type>(<scope>): <short summary>
+
+[optional body]
+
+[optional footer — e.g. Closes #42]
 ```
 
-Always branch off `main`:
+Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `style`.
 
-```bash
-git checkout main && git pull origin main
-git checkout -b feat/<issue>-<slug>
+Examples:
+
+```
+feat(contracts): add post-moderation hook
+fix(indexer): handle null ledger sequence on genesis block
+docs(contributing): add branch protection rules section
 ```
 
 ---
 
-## Making Changes
+## Pull Request Process
 
-1. **Read the issue** — understand the acceptance criteria before writing code.
-2. **Keep changes focused** — one issue per branch. Avoid unrelated cleanup in
-   the same PR.
-3. **Follow existing patterns** — match the logging, error handling, and
-   project structure of the service you are modifying.
-4. **Add or update tests** — new features and bug fixes should include test
-   coverage. See [Testing](#testing) below.
-5. **Update documentation** — if you change a public API or add a new service,
-   update the relevant docs under `docs/`.
-
----
-
-## Pull Requests
-
-1. Push your branch and open a PR against `main` on the upstream repository:
+1. **Rebase** your branch on the latest `upstream/main` before opening a PR:
 
    ```bash
-   git push -u origin feat/<issue>-<slug>
-
-   gh pr create \
-     --repo julianajohn7202-stack/Linkora-social \
-     --base main \
-     --head <your-fork>:feat/<issue>-<slug> \
-     --title "feat: short description" \
-     --body "..."
+   git fetch upstream
+   git rebase upstream/main
    ```
 
-2. **PR title** — use a conventional commit prefix (`feat:`, `fix:`, `chore:`,
-   `docs:`, `refactor:`) followed by a concise description (≤ 70 characters).
+2. **Push** your branch to your fork:
 
-3. **PR description** must include:
-   - A summary of what was implemented
-   - A `Closes #<issue-number>` line so the issue auto-closes on merge
+   ```bash
+   git push -u origin <branch-name>
+   ```
 
-4. **CI must pass** — all status checks (lint, typecheck, tests, contract
-   build) must be green before a reviewer will look at your PR.
+3. **Open** a PR against `julianajohn7202-stack/Linkora-social:main`.
 
-5. **One approval required** — at least one maintainer must approve before
-   merging.
+4. **Title**: keep it under 70 characters and use the Conventional Commits
+   format (e.g. `feat(sdk): add typed tip client`).
+
+5. **Description**: explain _what_ was implemented and reference the issue
+   with `Closes #<issue>`.
+
+6. **Wait for CI** — all required status checks must pass before merging.
+
+7. A maintainer will review and approve. Address any requested changes by
+   pushing additional commits (do **not** force-push after review has started).
+
+8. Once approved and green, the PR will be merged using **rebase merge** to
+   keep a linear history on `main`.
 
 ---
 
-## Testing
+## Branch Protection Rules
+
+The `main` branch is protected with the following rules enforced via GitHub
+repository settings:
+
+| Rule                                      | Setting                                                                                       |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Require pull request before merging       | ✅ Enabled                                                                                    |
+| Required approving reviews                | **1** (minimum)                                                                               |
+| Dismiss stale reviews on new push         | ✅ Enabled                                                                                    |
+| Require status checks to pass             | ✅ Enabled                                                                                    |
+| Required status checks                    | `CI / JS/TS — typecheck, test, build`<br>`CI / Lint TypeScript Packages`<br>`CI / Unit Tests` |
+| Require branches to be up to date         | ✅ Enabled                                                                                    |
+| Require linear history (no merge commits) | ✅ Enabled                                                                                    |
+| Do not allow force pushes                 | ✅ Enabled                                                                                    |
+| Do not allow deletions                    | ✅ Enabled                                                                                    |
+
+### Why these rules?
+
+- **PR reviews** catch bugs and keep the team aligned before code lands.
+- **Status checks** ensure every merge passes typecheck, lint, unit tests, and
+  contract tests — so `main` is always deployable.
+- **Linear history** makes `git bisect` reliable and the log easy to read.
+  Use `git rebase` instead of merge commits when incorporating upstream changes.
+
+### Applying the rules (maintainers only)
+
+For maintainers, these settings live in:
+**GitHub → Settings → Branches → Branch protection rules → `main`**.
+
+A GitHub CLI command to apply them (requires `admin` scope):
 
 ```bash
-# JS/TS unit tests (all packages and services)
-pnpm test
-
-# Smart contract unit + fuzz tests
-pnpm --filter contracts test
-# or: cd packages/contracts && cargo test
-
-# All service tests via Makefile
-make test-services
-
-# Migration tests (requires Docker)
-bash tests/migrations/test-migrations.sh
-
-# Integration / E2E (nightly; requires Docker + stellar-cli)
-pnpm test:integration
+gh api repos/julianajohn7202-stack/Linkora-social/branches/main/protection \
+  --method PUT \
+  --field required_status_checks='{"strict":true,"contexts":["CI / JS/TS — typecheck, test, build","CI / Lint TypeScript Packages","CI / Unit Tests"]}' \
+  --field enforce_admins=false \
+  --field required_pull_request_reviews='{"required_approving_review_count":1,"dismiss_stale_reviews":true}' \
+  --field restrictions=null \
+  --field required_linear_history=true \
+  --field allow_force_pushes=false \
+  --field allow_deletions=false
 ```
 
 ---
 
 ## Code Style
 
-- **TypeScript** — ESLint + Prettier. Run `pnpm lint` and `pnpm format` before
-  committing. A pre-commit hook enforces this automatically.
-- **Rust** — `rustfmt` and `clippy`. The CI runs `cargo fmt --check` and
-  `cargo clippy -- -D warnings`.
-- **Commit messages** — follow
-  [Conventional Commits](https://www.conventionalcommits.org/). The commit
-  message format is: `<type>(<optional scope>): <description>`.
+- **TypeScript**: enforced by ESLint (`pnpm lint`) and Prettier (`pnpm format`).
+  Config lives in `.eslintrc.base.json` and `.prettierrc`.
+- **Rust**: enforced by `rustfmt` and `clippy`. Run `cargo fmt` and
+  `cargo clippy -- -D warnings` before pushing.
+- A pre-commit hook (Husky) runs linting automatically on staged files.
 
 ---
 
-## Production Deployments
+## Testing
 
-### How it works
+```bash
+# TypeScript unit tests
+pnpm test
 
-Every merge to `main` that has the required secrets configured triggers the
-`Deploy Testnet` workflow (`.github/workflows/deploy-testnet.yml`). The
-workflow's `deploy` job is gated by the **`production` GitHub environment**,
-which requires explicit approval from one or more designated reviewers before
-the job runs.
+# Contract unit + fuzz tests
+pnpm --filter contracts test
 
-This means:
+# Integration tests (requires Docker)
+bash tests/integration/run_e2e.sh
 
-1. A push to `main` triggers the workflow.
-2. The workflow pauses at the `deploy` job and sends an approval request to all
-   required reviewers via GitHub notification / email.
-3. A reviewer inspects the changes and clicks **Approve** (or **Reject**) in
-   the GitHub Actions UI.
-4. Only after approval does the deployment proceed.
+# Migration tests (requires Docker)
+bash tests/migrations/test-migrations.sh
+```
 
-All deployments — successful and rejected — are recorded in the **Environments**
-tab of the repository, giving a full audit trail.
-
-### Setting up the environment (admins only)
-
-The `production` environment must be created once by a repository administrator:
-
-1. Go to **Settings → Environments → New environment** in the GitHub
-   repository.
-2. Name it exactly `production`.
-3. Enable **Required reviewers** and add the appropriate team(s) or
-   individual(s).
-4. Set **Deployment branch policy → Selected branches** and allow only `main`.
-5. Optionally enable **Prevent self-review**.
-6. Save.
-
-See `.github/environments/production.yml` for a full reference of the expected
-settings.
-
-### Why this matters
-
-Without environment protection, any workflow job can deploy to production
-without human oversight. A misconfigured secret, a bad merge, or an automated
-dependency bump could silently break the live environment. The approval gate
-ensures at least one human reviews the intent before production is touched.
-
----
-
-## Reporting Issues
-
-Use the issue templates in `.github/ISSUE_TEMPLATE/` to file bug reports,
-feature requests, or contract issues. For security vulnerabilities, see
-[SECURITY.md](./SECURITY.md).
-
----
-
-## License
-
-By contributing you agree that your contributions will be licensed under the
-[MIT License](./LICENSE).
+All tests must pass locally before opening a PR. CI will re-run them on every
+push to a PR branch and on every push to `main`.
