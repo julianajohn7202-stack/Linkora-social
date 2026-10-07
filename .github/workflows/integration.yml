@@ -78,7 +78,7 @@ jobs:
         run: pnpm test:e2e
 
       - name: Upload Playwright report (optional E2E)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         if: (github.event.inputs.run_e2e == 'true' || github.event_name == 'schedule') && always()
         with:
           name: playwright-report
