@@ -84,7 +84,7 @@ jobs:
         run: pnpm test:e2e
 
       - name: Upload test results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: sdk-e2e-results
