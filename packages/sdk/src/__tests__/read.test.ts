@@ -97,6 +97,48 @@ describe("LinkoraClient read methods", () => {
     });
   });
 
+  describe("governance indexer reads", () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it("fetches a proposal by ID and returns null for an unknown proposal", async () => {
+      const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ proposal: { id: 7n, status: "Active" } }),
+      } as Response).mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) } as Response);
+
+      await expect(client.getProposal(7)).resolves.toEqual({ id: 7n, status: "Active" });
+      await expect(client.getProposal(8)).resolves.toBeNull();
+      expect(fetchMock.mock.calls[0][0]).toContain("/governance/proposals/7");
+    });
+
+    it("uses status and cursor query parameters when listing proposals", async () => {
+      const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ proposals: [], next_cursor: "next-page" }),
+      } as Response);
+
+      await expect(
+        client.listProposals({ status: "Active", cursor: "20", limit: 10 })
+      ).resolves.toEqual({ proposals: [], nextCursor: "next-page" });
+      expect(String(fetchMock.mock.calls[0][0])).toContain(
+        "limit=10&status=Active&cursor=20"
+      );
+    });
+
+    it("fetches voting power from the configured indexer", async () => {
+      const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ voting_power: "1250" }),
+      } as Response);
+
+      await expect(client.getVotingPower("GUSER")).resolves.toBe(1250n);
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/governance/voting-power/GUSER");
+    });
+  });
+
   describe("getAddressByUsername", () => {
     it("returns address", async () => {
       success("GOWNER");
