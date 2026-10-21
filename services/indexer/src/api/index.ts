@@ -17,6 +17,7 @@ import { createNotificationsRouter } from "./routes/notifications";
 import { createGovernanceRouter } from "./routes/governance";
 import { createUsersRouter } from "./routes/users";
 import { createFeedRouter } from "./routes/feed";
+import { createReputationRouter } from "./routes/reputation";
 import { createSearchRouter } from "./routes/search";
 import { MediaUploadConfig } from "../config";
 import { isFenced } from "../gossip";
@@ -206,6 +207,7 @@ export function createApp(
   app.use("/api/governance", createGovernanceRouter(db));
   app.use("/api/users", createUsersRouter(db));
   app.use("/api/feed", createFeedRouter(pg ?? db));
+  if (pg) app.use("/api/reputation", createReputationRouter(pg));
 
   const notificationService = pg
     ? new NotificationService({ deviceTokenStore: new PostgresDeviceTokenStore(pg) })
