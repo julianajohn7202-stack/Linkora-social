@@ -696,3 +696,25 @@ CREATE INDEX idx_media_attachments_post_id ON public.media_attachments USING btr
 CREATE INDEX idx_media_attachments_content_hash ON public.media_attachments USING btree (content_hash);
 ALTER TABLE ONLY public.media_attachments
     ADD CONSTRAINT media_attachments_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id) ON DELETE CASCADE NOT VALID;
+CREATE SEQUENCE public.analytics_events_id_seq
+    AS bigint
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+CREATE TABLE public.analytics_events (
+    id bigint DEFAULT nextval('public.analytics_events_id_seq'::regclass) NOT NULL,
+    user_address text NOT NULL,
+    event_type text NOT NULL,
+    granularity text DEFAULT 'raw'::text NOT NULL,
+    bucket timestamp with time zone DEFAULT now() NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    session_id text
+);
+ALTER SEQUENCE public.analytics_events_id_seq OWNED BY public.analytics_events.id;
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_pkey PRIMARY KEY (id);
+CREATE INDEX idx_analytics_events_user_time ON public.analytics_events USING btree (user_address, occurred_at DESC);
+CREATE INDEX idx_analytics_events_type_time ON public.analytics_events USING btree (event_type, occurred_at DESC);

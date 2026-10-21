@@ -17,6 +17,11 @@ import { createHealthRouter } from "./routes/health.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { validateParams } from "./middleware/validate.js";
 import { AttestationCache } from "./attestation-cache.js";
+import {
+  getFunnelMetrics,
+  UnknownFunnelError,
+  type AnalyticsQueryPool,
+} from "../../../packages/analytics/src/funnel.js";
 import { createKeystore, Keystore } from "./secrets.js";
 import { z } from "zod";
 import { notFoundError, isAppError } from "@linkora/types/src/errors.js";
@@ -233,6 +238,18 @@ app.use(
 // Per-IP rate limiting applied to attestation-serving endpoints. See
 // services/analytics-oracle/src/middleware/rate-limiter.ts and config.ts.
 app.use(rateLimiter);
+
+app.get("/analytics/funnels/:name", async (req, res, next) => {
+  try {
+    res.json(await getFunnelMetrics(db as unknown as AnalyticsQueryPool, req.params["name"] ?? ""));
+  } catch (error) {
+    if (error instanceof UnknownFunnelError) {
+      res.status(404).json({ error: { code: "NOT_FOUND", message: error.message } });
+      return;
+    }
+    next(error);
+  }
+});
 
 const creatorParamsSchema = z.object({
   creator: z.string().regex(/^G[A-Z2-7]{55}$/, "Invalid Stellar address format"),

@@ -12,9 +12,9 @@ Migration files are named `NNN_<description>.sql` where `NNN` is a
 Numbers must be strictly increasing; gaps are allowed but discouraged because
 they cause confusion when multiple contributors prepare migrations in parallel.
 
-**Current applied range:** `001` – `015`
+**Current applied range:** `001` – `020`
 
-**Next available number:** `016`
+**Next available number:** `021`
 
 When two branches both add a migration and their numbers conflict, the later
 branch must renumber. Always check the highest existing number in
@@ -25,21 +25,18 @@ intentionally applied as a group (e.g. the three `009_` files that add
 governance, post scores, and full-text search were deployed together).
 Prefer unique prefixes for new work to make the ordering unambiguous.
 
-## Planned migrations (016–019)
+## Migration reference
 
-The following migrations are designed and will be submitted in upcoming PRs.
-They follow the same additive / idempotent rules as all existing migrations.
+These migrations follow the same additive and idempotent rules as the existing
+schema.
 
-| Number | File (planned) | Table | Summary |
+| Number | File | Table | Summary |
 |--------|---------------|-------|---------|
-| `016` | `016_notifications.sql` | `notifications` | Persistent per-user notification records (type, actor, object, read flag). Replaces ephemeral WebSocket-only delivery. Adds `idx_notifications_recipient` and `idx_notifications_unread` indexes. Foreign-keys recipient to `profiles.address`. |
-| `017` | `017_reputation_scores.sql` | `reputation_scores` | Stores computed reputation scores per address (`score NUMERIC`, `computed_at TIMESTAMPTZ`, `signal_breakdown JSONB`). Updated by the analytics-oracle on a cron schedule. Unique on `address`. |
-| `018` | `018_analytics_events.sql` | `analytics_events` | Append-only table for aggregated analytics snapshots (`event_type TEXT`, `granularity TEXT` — `hourly`/`daily`, `bucket TIMESTAMPTZ`, `payload JSONB`). Used by the `/analytics` dashboard page and the analytics-oracle service. Partitioned by `bucket` (range, monthly). |
-| `019` | `019_profiles_fts.sql` | `profiles` (ALTER) | Adds a `tsv TSVECTOR GENERATED ALWAYS` column to `profiles` for full-text search on display name and bio. Mirrors the approach in `009_posts_fts.sql`. Creates `idx_profiles_fts` GIN index. |
-
-> **Note for contributors:** If you are assigned one of these migrations, pick
-> up the corresponding number. If a higher number is already taken in a merged
-> PR by the time you start, renumber accordingly and update this table.
+| `016` | `016_reputation_scores.sql` | `reputation_scores` | Stores computed reputation scores per address and signal breakdown. |
+| `017` | `017_creator_analytics.sql` | `creator_analytics` | Stores creator analytics snapshots indexed by creator and date. |
+| `018` | `018_search_index.sql` | `search_index` | Defines the full-text search materialized view and its indexes. |
+| `019` | `019_media_attachments.sql` | `media_attachments` | Stores media attachment metadata for posts. |
+| `020` | `020_analytics_events.sql` | `analytics_events` | Stores append-only raw user events used for ordered conversion funnel aggregation. |
 
 ## Design rules
 
