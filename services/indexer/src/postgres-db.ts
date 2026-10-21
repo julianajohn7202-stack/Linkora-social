@@ -50,6 +50,31 @@ export class PostgresDatabase implements Database {
     return res.rows[0] ?? null;
   }
 
+  async getProfileByUsername(username: string): Promise<Profile | null> {
+    const res = await this.pool.query(
+      `SELECT address, username, creator_token, updated_ledger
+       FROM profiles
+       WHERE lower(username) = lower($1)
+       ORDER BY address ASC
+       LIMIT 1`,
+      [username.trim()]
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async searchProfiles(query: string, limit: number): Promise<Profile[]> {
+    const normalizedQuery = query.trim();
+    const res = await this.pool.query(
+      `SELECT address, username, creator_token, updated_ledger
+       FROM profiles
+       WHERE position(lower($1) in lower(username)) = 1
+       ORDER BY lower(username), address
+       LIMIT $2`,
+      [normalizedQuery, limit]
+    );
+    return res.rows;
+  }
+
   // ───────────────────────────────── Follows ──────────────────────────────────
 
   async insertFollow(follow: Follow): Promise<void> {

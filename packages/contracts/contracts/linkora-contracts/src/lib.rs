@@ -7,9 +7,12 @@ use soroban_sdk::{
 };
 
 mod errors;
+mod rewards;
+mod storage_keys;
 mod validation;
 
 pub use errors::{ContractError, RentError};
+pub use storage_keys::StorageKey;
 use validation::{
     validate_address_list, validate_amount, validate_gov_parameter, validate_non_default_address,
     validate_protocol_fee, validate_pubkey_32, validate_report_verdict,
@@ -17,59 +20,6 @@ use validation::{
     MAX_BIO_LEN, MAX_CONTENT_LEN, MAX_FEE_BPS, MAX_QUORUM,
 };
 
-// ── Storage Key Enum ──────────────────────────────────────────────────────────
-
-#[contracttype]
-#[derive(Clone)]
-pub enum StorageKey {
-    Post(u64),                            // persistent: post_id -> Post
-    Profile(Address),                     // persistent: user -> Profile
-    Following(Address), // persistent: user -> Vec<Address> (LEGACY — kept for migration)
-    Followers(Address), // persistent: user -> Vec<Address> (LEGACY — kept for migration)
-    Pool(Symbol),       // persistent: pool_id -> Pool
-    Like(u64, Address), // persistent: (post_id, user) -> bool
-    AuthorPosts(Address), // persistent: author -> Vec<u64> of post IDs
-    Blocks(Address),    // persistent: blocker -> Map<Address, ()>
-    BlockedBy(Address), // persistent: blocked -> Map<Address, ()> (reverse index: who blocked this user)
-    UsernameIndex(String), // persistent: username -> owner Address (reverse index for uniqueness)
-    TipCooldown(u64, Address), // temporary: (post_id, tipper) -> last-tip ledger sequence number
-    PoolDepositCooldown(Symbol, Address), // temporary: (pool_id, depositor) -> last-deposit ledger sequence number
-    // ── Adjacency-set social graph (ADR-001) ──────────────────────────────
-    Edge(Address, Address),         // persistent: (follower, followee) -> bool
-    FollowingCount(Address),        // persistent: user -> u32 total following count
-    FollowersCount(Address),        // persistent: user -> u32 total follower count
-    FollowingIdx(Address, u32),     // persistent: (user, seq) -> Address (ordered index)
-    FollowersIdx(Address, u32),     // persistent: (user, seq) -> Address (ordered index)
-    FollowingPos(Address, Address), // persistent: (follower, followee) -> u32 position in idx
-    FollowersPos(Address, Address), // persistent: (followee, follower) -> u32 position in idx
-    GraphMigrated(Address),         // persistent: user -> bool (migration tracking)
-    DmPublicKey(Address),           // persistent: user -> X25519 public key for encrypted DMs
-    CredentialRoot(Address),        // persistent: user -> credential Merkle root
-    NullifierSet(Address, BytesN<32>), // persistent: (user, nullifier) -> bool (prevents replay)
-    CredentialAuthority, // persistent: Ed25519 pubkey trusted to sign credential root updates
-    // ── Governance ────────────────────────────────────────────────────────
-    GovProposal(u64),      // persistent: proposal_id -> GovProposal
-    GovVote(u64, Address), // persistent: (proposal_id, voter) -> bool (prevents double-voting)
-    GovConfig,             // persistent: governance configuration
-    GovProposalCount,      // persistent: next proposal id counter
-    GovOpenProposalCount(Address), // persistent: proposer -> u32 count of open proposals
-    // ── Analytics Oracle ──────────────────────────────────────────────────
-    OracleKey(Symbol), // persistent: oracle_name -> BytesN<32> Ed25519 pubkey
-    AttestationNullifier(BytesN<32>), // persistent: sha256(report_cbor) -> bool (replay guard)
-    Report(u64, Address), // persistent: (post_id, reporter) -> Report
-    ReportCount(u64),  // persistent: post_id -> u32 count of reports
-    OpenReports(Address), // persistent: reporter -> u32 count of unresolved reports
-
-    // ── Lazy Cleanup (Tombstones & Indexes) ───────────────────────────────
-    DeletedPost(u64),              // persistent: post_id -> bool
-    DeletedProfile(Address),       // persistent: user -> bool
-    PostLikersCount(u64),          // persistent: post_id -> u32
-    PostLikersIdx(u64, u32),       // persistent: (post_id, seq) -> Address
-    PostReportersIdx(u64, u32),    // persistent: (post_id, seq) -> Address (Count is ReportCount)
-    PostTipCooldownsCount(u64),    // persistent: post_id -> u32
-    PostTipCooldownsIdx(u64, u32), // persistent: (post_id, seq) -> Address
-    UpgradeProposal,               // instance: staged WASM upgrade proposal
-}
 
 // ── Instance-storage key constants (small scalars, not contracttype) ──────────
 
@@ -245,6 +195,25 @@ pub struct Report {
     pub reason_hash: BytesN<32>,
     pub created_ledger: u32,
     pub status: ReportStatus,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct RewardDistributionEvent {
+    #[topic]
+    pub epoch: u64,
+    pub recipients: u32,
+    pub total: i128,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct RewardClaimEvent {
+    #[topic]
+    pub epoch: u64,
+    #[topic]
+    pub recipient: Address,
+    pub amount: i128,
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────
@@ -1929,6 +1898,55 @@ impl LinkoraContract {
         blocks.contains_key(blocked)
     }
 
+    /// Create and fund one immutable reward epoch. Only an admin can distribute rewards.
+    pub fn distribute_rewards(
+        env: Env,
+        admin: Address,
+        token_address: Address,
+        claims: Map<Address, i128>,
+    ) -> u64 {
+        admin.require_auth();
+        validate_non_default_address(&env, "token", &token_address);
+        Self::require_role(&env, &admin, Role::Admin);
+        let (epoch, recipient_count, total) =
+            rewards::distribute(&env, &admin, &token_address, &claims);
+        Self::bump(&env, &StorageKey::RewardToken(epoch));
+        for (recipient, _) in claims.iter() {
+            Self::bump(&env, &StorageKey::RewardClaimable(recipient, epoch));
+        }
+        RewardDistributionEvent {
+            epoch,
+            recipients: recipient_count,
+            total,
+        }
+        .publish(&env);
+        epoch
+    }
+
+    /// Claim a recipient's reward for an epoch. A repeated claim is rejected.
+    pub fn claim_reward(env: Env, recipient: Address, epoch: u64) -> i128 {
+        recipient.require_auth();
+        validate_non_default_address(&env, "recipient", &recipient);
+        let amount = rewards::claim(&env, epoch, &recipient);
+        Self::bump(&env, &StorageKey::RewardClaimed(recipient.clone(), epoch));
+        Self::bump(&env, &StorageKey::RewardClaimable(recipient.clone(), epoch));
+        RewardClaimEvent {
+            epoch,
+            recipient,
+            amount,
+        }
+        .publish(&env);
+        amount
+    }
+
+    pub fn get_claimable_reward(env: Env, recipient: Address, epoch: u64) -> i128 {
+        rewards::get_claimable(&env, &recipient, epoch)
+    }
+
+    pub fn get_reward_epoch(env: Env) -> u64 {
+        rewards::current_epoch(&env)
+    }
+
     /// Helper: checks if either user has blocked the other (bidirectional check).
     fn is_either_blocked(env: &Env, a: &Address, b: &Address) -> bool {
         Self::is_blocked(env.clone(), a.clone(), b.clone())
@@ -3267,6 +3285,56 @@ impl LinkoraContract {
         .publish(&env);
     }
 
+    /// Finalize a closed vote window. Anyone may submit this transaction; it
+    /// persists Passed or Failed so execution is not dependent on read calls.
+    pub fn gov_finalize(env: Env, proposal_id: u64) -> GovStatus {
+        require_with_error!(&env, proposal_id > 0, "proposal id must be positive");
+        let proposal_key = StorageKey::GovProposal(proposal_id);
+        let mut proposal: GovProposal = env
+            .storage()
+            .persistent()
+            .get(&proposal_key)
+            .expect("proposal not found");
+        require_with_error!(
+            &env,
+            proposal.status == GovStatus::Active,
+            "proposal not active"
+        );
+        let vote_end = proposal
+            .created_ledger
+            .saturating_add(proposal.vote_window_ledgers);
+        require_with_error!(&env, env.ledger().sequence() > vote_end, "vote window still open");
+
+        let total_votes = proposal.votes_for.saturating_add(proposal.votes_against);
+        let approval_pct = if total_votes == 0 {
+            0
+        } else {
+            (proposal.votes_for as u64 * 100 / total_votes as u64) as u32
+        };
+        let required_quorum = Self::effective_quorum(env.clone(), proposal_id);
+        proposal.status = if total_votes > 0 && approval_pct >= required_quorum {
+            GovStatus::Passed
+        } else {
+            GovStatus::Failed
+        };
+        env.storage().persistent().set(&proposal_key, &proposal);
+        Self::bump(&env, &proposal_key);
+
+        let open_count_key = StorageKey::GovOpenProposalCount(proposal.proposer.clone());
+        let open_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&open_count_key)
+            .unwrap_or(0);
+        if open_count > 0 {
+            env.storage()
+                .persistent()
+                .set(&open_count_key, &(open_count - 1));
+            Self::bump(&env, &open_count_key);
+        }
+        proposal.status
+    }
+
     /// Computes the effective quorum for a proposal, accounting for time-based
     /// decay. The quorum decays linearly from the initial value toward
     /// `quorum_floor` based on elapsed ledgers since creation.
@@ -3342,9 +3410,10 @@ impl LinkoraContract {
 
         require_with_error!(
             &env,
-            proposal.status == GovStatus::Active,
-            "proposal not active"
+            proposal.status == GovStatus::Active || proposal.status == GovStatus::Passed,
+            "proposal is not executable"
         );
+        let already_finalized = proposal.status == GovStatus::Passed;
 
         let current_ledger = env.ledger().sequence();
         let vote_end = proposal.created_ledger + proposal.vote_window_ledgers;
@@ -3418,18 +3487,20 @@ impl LinkoraContract {
         env.storage().persistent().set(&proposal_key, &proposal);
         Self::bump(&env, &proposal_key);
 
-        // Decrement open proposal count for the proposer.
-        let open_count_key = StorageKey::GovOpenProposalCount(proposal.proposer.clone());
-        let current_open: u32 = env
-            .storage()
-            .persistent()
-            .get(&open_count_key)
-            .unwrap_or(0u32);
-        if current_open > 0 {
-            env.storage()
+        // Finalization already decremented this count for Passed proposals.
+        if !already_finalized {
+            let open_count_key = StorageKey::GovOpenProposalCount(proposal.proposer.clone());
+            let current_open: u32 = env
+                .storage()
                 .persistent()
-                .set(&open_count_key, &(current_open - 1));
-            Self::bump(&env, &open_count_key);
+                .get(&open_count_key)
+                .unwrap_or(0u32);
+            if current_open > 0 {
+                env.storage()
+                    .persistent()
+                    .set(&open_count_key, &(current_open - 1));
+                Self::bump(&env, &open_count_key);
+            }
         }
 
         GovProposalExecutedEvent {

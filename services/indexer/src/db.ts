@@ -165,6 +165,8 @@ export interface Database {
 
   // Query methods used by the REST API
   getProfile(address: string): Promise<Profile | null>;
+  getProfileByUsername(username: string): Promise<Profile | null>;
+  searchProfiles(query: string, limit: number): Promise<Profile[]>;
   listPosts(filters: {
     author?: string;
     limit: number;
