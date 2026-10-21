@@ -1,8 +1,9 @@
-/**
- * @linkora/reputation
- *
- * Reputation scoring primitives for the Linkora protocol.
- * This package is a stub — implementation is in progress.
- */
-
-export {};
+export {
+  computeScore,
+  scoreToTier,
+  DEFAULT_SCORE_WEIGHTS,
+  type ReputationSignals,
+  type ReputationSignal,
+  type ReputationTier,
+  type ScoreWeights,
+} from "./scorer";
