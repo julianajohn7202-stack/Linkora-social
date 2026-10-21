@@ -696,3 +696,29 @@ CREATE INDEX idx_media_attachments_post_id ON public.media_attachments USING btr
 CREATE INDEX idx_media_attachments_content_hash ON public.media_attachments USING btree (content_hash);
 ALTER TABLE ONLY public.media_attachments
     ADD CONSTRAINT media_attachments_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id) ON DELETE CASCADE NOT VALID;
+
+-- Migration 020: notifications
+CREATE SEQUENCE public.notifications_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+CREATE TABLE public.notifications (
+    id bigint DEFAULT nextval('public.notifications_id_seq'::regclass) NOT NULL,
+    recipient text NOT NULL,
+    type text NOT NULL,
+    actor text,
+    object_type text,
+    object_id text,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    read_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+ALTER SEQUENCE public.notifications_id_seq OWNED BY public.notifications.id;
+ALTER TABLE ONLY public.notifications
+    ADD CONSTRAINT notifications_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.notifications
+    ADD CONSTRAINT notifications_recipient_fkey FOREIGN KEY (recipient) REFERENCES public.profiles(address) ON DELETE CASCADE;
+CREATE INDEX idx_notifications_recipient ON public.notifications USING btree (recipient, created_at DESC);
+CREATE INDEX idx_notifications_unread ON public.notifications USING btree (recipient, created_at DESC) WHERE (read_at IS NULL);
