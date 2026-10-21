@@ -1,8 +1,7 @@
 /**
  * @linkora/analytics
  *
- * On-chain analytics primitives for the Linkora protocol.
- * This package is a stub — implementation is in progress.
+ * Analytics event collection primitives for the Linkora protocol.
  */
 
-export {};
+export * from "./events";
