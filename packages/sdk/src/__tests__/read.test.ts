@@ -97,45 +97,75 @@ describe("LinkoraClient read methods", () => {
     });
   });
 
-  describe("governance indexer reads", () => {
+  describe("tip history indexer reads", () => {
     afterEach(() => jest.restoreAllMocks());
 
-    it("fetches a proposal by ID and returns null for an unknown proposal", async () => {
-      const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ proposal: { id: 7n, status: "Active" } }),
-      } as Response).mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) } as Response);
-
-      await expect(client.getProposal(7)).resolves.toEqual({ id: 7n, status: "Active" });
-      await expect(client.getProposal(8)).resolves.toBeNull();
-      expect(fetchMock.mock.calls[0][0]).toContain("/governance/proposals/7");
-    });
-
-    it("uses status and cursor query parameters when listing proposals", async () => {
+    it("maps per-post tip history records and preserves pagination", async () => {
       const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ proposals: [], next_cursor: "next-page" }),
+        json: async () => ({
+          tips: [
+            {
+              id: 3,
+              tipper: "GUSER",
+              post_id: "12",
+              amount: "1000",
+              fee: "50",
+              created_at: "2025-01-01T00:00:00.000Z",
+              tx_hash: "tx-hash",
+            },
+          ],
+          total: 3,
+          next_cursor: "1",
+        }),
+      } as Response);
+
+      const page = await client.getTipsByPost(12, { limit: 1, cursor: "0" });
+      expect(page.tips[0]).toMatchObject({ id: 3, post_id: 12n, amount: 1000n, fee: 50n });
+      expect(page.tips[0].created_at).toEqual(new Date("2025-01-01T00:00:00.000Z"));
+      expect(page.nextCursor).toBe("1");
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/tips/by-post/12?limit=1&cursor=0");
+    });
+
+    it("queries received and sent tip histories for the requested address", async () => {
+      const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ tips: [], total: 0, next_cursor: null }),
+      } as Response);
+
+      await client.getTipsReceived("GUSER");
+      await client.getTipsSent("GUSER");
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/tips/received/GUSER");
+      expect(String(fetchMock.mock.calls[1][0])).toContain("/tips/sent/GUSER");
+    });
+
+    it("aggregates tip totals for the requested date range", async () => {
+      const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          sent_count: 2,
+          sent_amount: "2000",
+          sent_fee: "100",
+          received_count: 3,
+          received_amount: "2850",
+          received_fee: "150",
+        }),
       } as Response);
 
       await expect(
-        client.listProposals({ status: "Active", cursor: "20", limit: 10 })
-      ).resolves.toEqual({ proposals: [], nextCursor: "next-page" });
-      expect(String(fetchMock.mock.calls[0][0])).toContain(
-        "limit=10&status=Active&cursor=20"
-      );
-    });
-
-    it("fetches voting power from the configured indexer", async () => {
-      const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ voting_power: "1250" }),
-      } as Response);
-
-      await expect(client.getVotingPower("GUSER")).resolves.toBe(1250n);
-      expect(String(fetchMock.mock.calls[0][0])).toContain("/governance/voting-power/GUSER");
+        client.getTipTotals("GUSER", "2025-01-01T00:00:00.000Z", "2025-02-01T00:00:00.000Z")
+      ).resolves.toEqual({
+        sentCount: 2,
+        sentAmount: 2000n,
+        sentFee: 100n,
+        receivedCount: 3,
+        receivedAmount: 2850n,
+        receivedFee: 150n,
+      });
+      expect(String(fetchMock.mock.calls[0][0])).toContain("from=2025-01-01T00%3A00%3A00.000Z");
     });
   });
 
