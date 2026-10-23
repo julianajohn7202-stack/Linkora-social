@@ -62,7 +62,7 @@
     "jest": "^29.7.0",
     "ts-jest": "^29.4.14",
     "typedoc": "^0.28.20",
-    "typescript": "^5.8.3"
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "@ledgerhq/hw-app-str": "^7.0.0",
