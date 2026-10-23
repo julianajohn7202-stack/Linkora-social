@@ -9,6 +9,7 @@ import {
   Pool as PoolModel,
   GovernanceProposal,
   GovernanceVote,
+  ReputationScore,
 } from "./db";
 
 export class PostgresDatabase implements Database {
@@ -50,29 +51,17 @@ export class PostgresDatabase implements Database {
     return res.rows[0] ?? null;
   }
 
-  async getProfileByUsername(username: string): Promise<Profile | null> {
+  async getReputationScore(address: string): Promise<ReputationScore | null> {
     const res = await this.pool.query(
-      `SELECT address, username, creator_token, updated_ledger
-       FROM profiles
-       WHERE lower(username) = lower($1)
-       ORDER BY address ASC
-       LIMIT 1`,
-      [username.trim()]
+      `
+      SELECT user_address, score, posts_count, tips_sent, tips_received,
+             governance_votes, last_computed_at, updated_ledger
+      FROM reputation_scores
+      WHERE user_address = $1
+      `,
+      [address]
     );
     return res.rows[0] ?? null;
-  }
-
-  async searchProfiles(query: string, limit: number): Promise<Profile[]> {
-    const normalizedQuery = query.trim();
-    const res = await this.pool.query(
-      `SELECT address, username, creator_token, updated_ledger
-       FROM profiles
-       WHERE position(lower($1) in lower(username)) = 1
-       ORDER BY lower(username), address
-       LIMIT $2`,
-      [normalizedQuery, limit]
-    );
-    return res.rows;
   }
 
   // ───────────────────────────────── Follows ──────────────────────────────────

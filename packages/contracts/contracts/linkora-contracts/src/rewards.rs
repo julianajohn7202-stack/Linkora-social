@@ -6,7 +6,7 @@ pub fn current_epoch(env: &Env) -> u64 {
     env.storage()
         .instance()
         .get(&StorageKey::RewardEpoch)
-        .unwrap_or(0)
+        .unwrap_or(0u64)
 }
 
 pub fn distribute(
@@ -30,13 +30,17 @@ pub fn distribute(
     let epoch = current_epoch(env)
         .checked_add(1)
         .unwrap_or_else(|| panic!("reward epoch overflow"));
-    token::Client::new(env, token_address).transfer(admin, &env.current_contract_address(), &total);
+    token::Client::new(env, token_address).transfer(
+        admin,
+        &env.current_contract_address(),
+        &total,
+    );
     env.storage().instance().set(&StorageKey::RewardEpoch, &epoch);
     env.storage()
         .persistent()
         .set(&StorageKey::RewardToken(epoch), token_address);
     for (recipient, amount) in claims.iter() {
-        record_claim(env, epoch, &recipient, amount);
+        record_claims(env, epoch, &recipient, amount);
     }
     (epoch, claims.len(), total)
 }
@@ -56,10 +60,16 @@ pub fn get_claimable(env: &Env, user: &Address, epoch: u64) -> i128 {
         .unwrap_or(0i128)
 }
 
-fn record_claim(env: &Env, epoch: u64, recipient: &Address, amount: i128) {
+pub fn record_claims(env: &Env, epoch: u64, recipient: &Address, amount: i128) {
     env.storage()
         .persistent()
         .set(&StorageKey::RewardClaimable(recipient.clone(), epoch), &amount);
+}
+
+pub fn mark_claimed(env: &Env, epoch: u64, recipient: &Address) {
+    env.storage()
+        .persistent()
+        .set(&StorageKey::RewardClaimed(recipient.clone(), epoch), &true);
 }
 
 pub fn claim(env: &Env, epoch: u64, recipient: &Address) -> i128 {
@@ -72,9 +82,7 @@ pub fn claim(env: &Env, epoch: u64, recipient: &Address) -> i128 {
         .persistent()
         .get(&StorageKey::RewardToken(epoch))
         .unwrap_or_else(|| panic!("reward token not found"));
-    env.storage()
-        .persistent()
-        .set(&StorageKey::RewardClaimed(recipient.clone(), epoch), &true);
+    mark_claimed(env, epoch, recipient);
     token::Client::new(env, &token_address).transfer(
         &env.current_contract_address(),
         recipient,

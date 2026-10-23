@@ -4,6 +4,7 @@ import { validateParams, validateQuery } from "../../middleware/validate";
 import { z } from "zod";
 import { stellarAddressSchema } from "@linkora/types/src/schemas";
 import { notFoundError } from "@linkora/types/src/errors";
+import { profileCacheKey, QueryCache } from "../../cache";
 
 const getProfileParamsSchema = z.object({
   address: stellarAddressSchema,
@@ -17,21 +18,25 @@ const searchProfileQuerySchema = z.object({
   "provide exactly one of username or q"
 );
 
-export function createProfilesRouter(db: Database): Router {
+export function createProfilesRouter(db: Database, cache?: QueryCache): Router {
   const router = Router();
 
   router.get(
-    "/search",
-    validateQuery(searchProfileQuerySchema),
+    "/:address/reputation",
+    validateParams(getProfileParamsSchema),
     async (req: Request, res: Response): Promise<void> => {
-      const { username, q, limit } = req.query as unknown as z.infer<typeof searchProfileQuerySchema>;
-      if (username) {
-        const profile = await db.getProfileByUsername(username);
-        res.json({ address: profile?.address ?? null });
+      const { address } = req.params;
+      if (!db.getReputationScore) {
+        res.status(501).json({ error: "Reputation scores are not available" });
         return;
       }
-      const profiles = await db.searchProfiles(q!, limit);
-      res.json({ profiles });
+
+      const reputation = await db.getReputationScore(address);
+      if (!reputation) {
+        res.status(404).json({ error: "Reputation score not found" });
+        return;
+      }
+      res.json(reputation);
     }
   );
 
@@ -39,9 +44,12 @@ export function createProfilesRouter(db: Database): Router {
     "/:address",
     validateParams(getProfileParamsSchema),
     async (req: Request, res: Response): Promise<void> => {
-      const { address } = req.params;
+      const addressParam = req.params.address;
+      const address = Array.isArray(addressParam) ? (addressParam[0] ?? "") : addressParam;
 
-      const profile = await db.getProfile(address);
+      const profile = cache
+        ? await cache.getOrLoad(profileCacheKey(address), 60, () => db.getProfile(address))
+        : await db.getProfile(address);
       if (!profile) {
         const err = notFoundError("Profile not found");
         res.status(err.statusCode).json(err.toJSON(req.context?.requestId));

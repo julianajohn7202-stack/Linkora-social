@@ -7,8 +7,9 @@ use soroban_sdk::{
 };
 
 mod errors;
+mod moderation;
+mod reputation;
 mod rewards;
-mod storage_keys;
 mod validation;
 
 pub use errors::{ContractError, RentError};
@@ -20,6 +21,68 @@ use validation::{
     MAX_BIO_LEN, MAX_CONTENT_LEN, MAX_FEE_BPS, MAX_QUORUM,
 };
 
+// ── Storage Key Enum ──────────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone)]
+pub enum StorageKey {
+    Post(u64),                            // persistent: post_id -> Post
+    Profile(Address),                     // persistent: user -> Profile
+    Following(Address), // persistent: user -> Vec<Address> (LEGACY — kept for migration)
+    Followers(Address), // persistent: user -> Vec<Address> (LEGACY — kept for migration)
+    Pool(Symbol),       // persistent: pool_id -> Pool
+    Like(u64, Address), // persistent: (post_id, user) -> bool
+    AuthorPosts(Address), // persistent: author -> Vec<u64> of post IDs
+    Blocks(Address),    // persistent: blocker -> Map<Address, ()>
+    BlockedBy(Address), // persistent: blocked -> Map<Address, ()> (reverse index: who blocked this user)
+    UsernameIndex(String), // persistent: username -> owner Address (reverse index for uniqueness)
+    TipCooldown(u64, Address), // temporary: (post_id, tipper) -> last-tip ledger sequence number
+    PoolDepositCooldown(Symbol, Address), // temporary: (pool_id, depositor) -> last-deposit ledger sequence number
+    // ── Adjacency-set social graph (ADR-001) ──────────────────────────────
+    Edge(Address, Address),         // persistent: (follower, followee) -> bool
+    FollowingCount(Address),        // persistent: user -> u32 total following count
+    FollowersCount(Address),        // persistent: user -> u32 total follower count
+    FollowingIdx(Address, u32),     // persistent: (user, seq) -> Address (ordered index)
+    FollowersIdx(Address, u32),     // persistent: (user, seq) -> Address (ordered index)
+    FollowingPos(Address, Address), // persistent: (follower, followee) -> u32 position in idx
+    FollowersPos(Address, Address), // persistent: (followee, follower) -> u32 position in idx
+    GraphMigrated(Address),         // persistent: user -> bool (migration tracking)
+    DmPublicKey(Address),           // persistent: user -> X25519 public key for encrypted DMs
+    CredentialRoot(Address),        // persistent: user -> credential Merkle root
+    NullifierSet(Address, BytesN<32>), // persistent: (user, nullifier) -> bool (prevents replay)
+    CredentialAuthority, // persistent: Ed25519 pubkey trusted to sign credential root updates
+    // ── Governance ────────────────────────────────────────────────────────
+    GovProposal(u64),      // persistent: proposal_id -> GovProposal
+    GovVote(u64, Address), // persistent: (proposal_id, voter) -> bool (prevents double-voting)
+    GovConfig,             // persistent: governance configuration
+    GovProposalCount,      // persistent: next proposal id counter
+    GovOpenProposalCount(Address), // persistent: proposer -> u32 count of open proposals
+    // ── Analytics Oracle ──────────────────────────────────────────────────
+    OracleKey(Symbol), // persistent: oracle_name -> BytesN<32> Ed25519 pubkey
+    AttestationNullifier(BytesN<32>), // persistent: sha256(report_cbor) -> bool (replay guard)
+    Report(u64, Address), // persistent: (post_id, reporter) -> Report
+    ReportCount(u64),  // persistent: post_id -> u32 count of reports
+    OpenReports(Address), // persistent: reporter -> u32 count of unresolved reports
+
+    // ── Lazy Cleanup (Tombstones & Indexes) ───────────────────────────────
+    DeletedPost(u64),              // persistent: post_id -> bool
+    DeletedProfile(Address),       // persistent: user -> bool
+    PostLikersCount(u64),          // persistent: post_id -> u32
+    PostLikersIdx(u64, u32),       // persistent: (post_id, seq) -> Address
+    PostReportersIdx(u64, u32),    // persistent: (post_id, seq) -> Address (Count is ReportCount)
+    PostTipCooldownsCount(u64),    // persistent: post_id -> u32
+    PostTipCooldownsIdx(u64, u32), // persistent: (post_id, seq) -> Address
+    UpgradeProposal,               // instance: staged WASM upgrade proposal
+    ReputationScore(Address),
+    ReputationDecayLedger(Address),
+    UserReports(Address),
+    UserReport(Address, Address),
+    Banned(Address),
+    RewardEpoch,
+    RewardClaimable(Address, u64),
+    RewardClaimed(Address, u64),
+    RewardToken(u64),
+}
 
 // ── Instance-storage key constants (small scalars, not contracttype) ──────────
 
@@ -195,6 +258,14 @@ pub struct Report {
     pub reason_hash: BytesN<32>,
     pub created_ledger: u32,
     pub status: ReportStatus,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ModerationReport {
+    pub reporter: Address,
+    pub reason_code: u32,
+    pub reported_ledger: u32,
 }
 
 #[contractevent]
@@ -1367,6 +1438,12 @@ impl LinkoraContract {
 
         require_with_error!(
             &env,
+            !moderation::is_banned(&env, &follower),
+            "banned users cannot follow"
+        );
+
+        require_with_error!(
+            &env,
             !Self::is_either_blocked(&env, &followee, &follower),
             "blocked: cannot follow — one user has blocked the other"
         );
@@ -1898,7 +1975,64 @@ impl LinkoraContract {
         blocks.contains_key(blocked)
     }
 
-    /// Create and fund one immutable reward epoch. Only an admin can distribute rewards.
+    /// File one idempotent user moderation report using a documented reason code (1–8).
+    pub fn report_user(env: Env, reporter: Address, target: Address, reason_code: u32) {
+        reporter.require_auth();
+        validate_non_default_address(&env, "reporter", &reporter);
+        validate_non_default_address(&env, "target", &target);
+        Self::require_not_paused(&env);
+        moderation::report(&env, &reporter, &target, reason_code);
+        Self::bump(&env, &StorageKey::UserReports(target.clone()));
+        Self::bump(&env, &StorageKey::UserReport(target, reporter));
+    }
+
+    /// Ban a user. Only an account with the Admin role can change ban state.
+    pub fn ban(env: Env, admin: Address, target: Address) {
+        admin.require_auth();
+        validate_non_default_address(&env, "target", &target);
+        Self::require_role(&env, &admin, Role::Admin);
+        moderation::ban(&env, &target);
+        Self::bump(&env, &StorageKey::Banned(target));
+    }
+
+    /// Remove a user's ban. Only an account with the Admin role can change ban state.
+    pub fn unban(env: Env, admin: Address, target: Address) {
+        admin.require_auth();
+        validate_non_default_address(&env, "target", &target);
+        Self::require_role(&env, &admin, Role::Admin);
+        moderation::unban(&env, &target);
+    }
+
+    pub fn is_banned(env: Env, target: Address) -> bool {
+        moderation::is_banned(&env, &target)
+    }
+
+    /// Update a user's reputation score with a signed delta. Negative results clamp to zero.
+    pub fn update_reputation_score(env: Env, admin: Address, user: Address, delta: i64) -> i64 {
+        admin.require_auth();
+        validate_non_default_address(&env, "user", &user);
+        Self::require_role(&env, &admin, Role::Admin);
+        let score = reputation::update_score(&env, &user, delta);
+        Self::bump(&env, &StorageKey::ReputationScore(user.clone()));
+        score
+    }
+
+    pub fn get_reputation_score(env: Env, user: Address) -> i64 {
+        reputation::get_score(&env, &user)
+    }
+
+    /// Apply 5% compound decay for each elapsed 17,280-ledger window.
+    pub fn apply_reputation_decay(env: Env, admin: Address, user: Address) -> i64 {
+        admin.require_auth();
+        validate_non_default_address(&env, "user", &user);
+        Self::require_role(&env, &admin, Role::Admin);
+        let score = reputation::apply_decay(&env, &user);
+        Self::bump(&env, &StorageKey::ReputationScore(user.clone()));
+        Self::bump(&env, &StorageKey::ReputationDecayLedger(user));
+        score
+    }
+
+    /// Fund and create a reward epoch. Claims are immutable once assigned.
     pub fn distribute_rewards(
         env: Env,
         admin: Address,
@@ -1908,34 +2042,28 @@ impl LinkoraContract {
         admin.require_auth();
         validate_non_default_address(&env, "token", &token_address);
         Self::require_role(&env, &admin, Role::Admin);
-        let (epoch, recipient_count, total) =
+        let (epoch, recipients, total) =
             rewards::distribute(&env, &admin, &token_address, &claims);
         Self::bump(&env, &StorageKey::RewardToken(epoch));
-        for (recipient, _) in claims.iter() {
+
+        for (recipient, amount) in claims.iter() {
             Self::bump(&env, &StorageKey::RewardClaimable(recipient, epoch));
         }
-        RewardDistributionEvent {
-            epoch,
-            recipients: recipient_count,
-            total,
-        }
-        .publish(&env);
+
+        RewardDistributionEvent { epoch, recipients, total }.publish(&env);
         epoch
     }
 
-    /// Claim a recipient's reward for an epoch. A repeated claim is rejected.
+    /// Claim a reward once for a specific epoch.
     pub fn claim_reward(env: Env, recipient: Address, epoch: u64) -> i128 {
         recipient.require_auth();
         validate_non_default_address(&env, "recipient", &recipient);
         let amount = rewards::claim(&env, epoch, &recipient);
-        Self::bump(&env, &StorageKey::RewardClaimed(recipient.clone(), epoch));
-        Self::bump(&env, &StorageKey::RewardClaimable(recipient.clone(), epoch));
-        RewardClaimEvent {
-            epoch,
-            recipient,
-            amount,
-        }
-        .publish(&env);
+        let claimed_key = StorageKey::RewardClaimed(recipient.clone(), epoch);
+        let claimable_key = StorageKey::RewardClaimable(recipient.clone(), epoch);
+        Self::bump(&env, &claimed_key);
+        Self::bump(&env, &claimable_key);
+        RewardClaimEvent { epoch, recipient, amount }.publish(&env);
         amount
     }
 
@@ -1981,6 +2109,11 @@ impl LinkoraContract {
             format!("content must be at most {max_post_len} characters")
         );
         Self::require_not_paused(&env);
+        require_with_error!(
+            &env,
+            !moderation::is_banned(&env, &author),
+            "banned users cannot create posts"
+        );
 
         let id: u64 = env.storage().instance().get(&POST_CT).unwrap_or(0u64) + 1;
         let key = StorageKey::Post(id);
