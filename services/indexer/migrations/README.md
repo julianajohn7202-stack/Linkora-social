@@ -1,7 +1,7 @@
 # Indexer database migrations
 
 SQL migrations for the indexer's PostgreSQL schema. Files apply in filename
-order (`001_…` → `015_…`). They are validated on every PR by the
+order (`001_…` → `020_…`). They are validated on every PR by the
 [Migration Tests](../../../.github/workflows/migrations.yml) workflow — see
 [Running the tests](#running-the-tests).
 
@@ -12,7 +12,7 @@ Migration files are named `NNN_<description>.sql` where `NNN` is a
 Numbers must be strictly increasing; gaps are allowed but discouraged because
 they cause confusion when multiple contributors prepare migrations in parallel.
 
-**Current applied range:** `001` – `020`
+**Current migration range:** `001` – `020`
 
 **Next available number:** `021`
 
@@ -25,18 +25,9 @@ intentionally applied as a group (e.g. the three `009_` files that add
 governance, post scores, and full-text search were deployed together).
 Prefer unique prefixes for new work to make the ordering unambiguous.
 
-## Migration reference
-
-These migrations follow the same additive and idempotent rules as the existing
-schema.
-
-| Number | File | Table | Summary |
-|--------|---------------|-------|---------|
-| `016` | `016_reputation_scores.sql` | `reputation_scores` | Stores computed reputation scores per address and signal breakdown. |
-| `017` | `017_creator_analytics.sql` | `creator_analytics` | Stores creator analytics snapshots indexed by creator and date. |
-| `018` | `018_search_index.sql` | `search_index` | Defines the full-text search materialized view and its indexes. |
-| `019` | `019_media_attachments.sql` | `media_attachments` | Stores media attachment metadata for posts. |
-| `020` | `020_analytics_events.sql` | `analytics_events` | Stores append-only raw user events used for ordered conversion funnel aggregation. |
+Migration `020_profile_username_lookup.sql` adds a functional index used by
+case-insensitive exact username resolution. Check the migration directory for
+the current highest number before adding the next migration.
 
 ## Design rules
 
