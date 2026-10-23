@@ -15,7 +15,8 @@ DECLARE
         'profiles', 'posts', 'follows', 'tips', 'likes', 'pools',
         'indexer_cursor', 'indexer_state', 'raw_events', 'device_tokens',
         'sent_notifications', 'governance_proposals', 'governance_votes',
-        'reports', 'blocks', 'dm_keys', 'notification_preferences'
+        'reports', 'blocks', 'dm_keys', 'notification_preferences',
+        'webhook_subscriptions', 'webhook_deliveries'
     ];
     t TEXT;
 BEGIN

@@ -1,9 +1,7 @@
-export {
-  computeScore,
-  scoreToTier,
-  DEFAULT_SCORE_WEIGHTS,
-  type ReputationSignals,
-  type ReputationSignal,
-  type ReputationTier,
-  type ScoreWeights,
-} from "./scorer";
+/**
+ * @linkora/reputation
+ *
+ * Reputation scoring primitives for the Linkora protocol.
+ */
+
+export * from "./scorer";
