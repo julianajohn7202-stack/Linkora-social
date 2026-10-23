@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { VotePanel } from "./VotePanel";
 
 export interface Proposal {
   id: string | number;
