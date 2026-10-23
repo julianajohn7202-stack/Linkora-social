@@ -12,7 +12,7 @@ Migration files are named `NNN_<description>.sql` where `NNN` is a
 Numbers must be strictly increasing; gaps are allowed but discouraged because
 they cause confusion when multiple contributors prepare migrations in parallel.
 
-**Current applied range:** `001` – `020`
+**Current migration range:** `001` – `020`
 
 **Next available number:** `021`
 
@@ -25,10 +25,9 @@ intentionally applied as a group (e.g. the three `009_` files that add
 governance, post scores, and full-text search were deployed together).
 Prefer unique prefixes for new work to make the ordering unambiguous.
 
-Migration `020_notifications.sql` adds persistent per-user notification
-records. Migration `016_reputation_scores.sql` already owns the reputation
-schema and its descending leaderboard index; migration numbers must never be
-reused to match stale issue descriptions.
+Migration `020_profile_username_lookup.sql` adds a functional index used by
+case-insensitive exact username resolution. Check the migration directory for
+the current highest number before adding the next migration.
 
 ## Design rules
 
