@@ -1,7 +1,8 @@
 /**
  * @linkora/analytics
  *
- * Analytics event collection primitives for the Linkora protocol.
+ * Analytics aggregation primitives for Linkora services.
  */
 
-export * from "./events";
+export { ANALYTICS_FUNNELS, getFunnelMetrics, UnknownFunnelError } from "./funnel";
+export type { AnalyticsQueryPool, FunnelName, FunnelResult, FunnelStepResult } from "./funnel";
