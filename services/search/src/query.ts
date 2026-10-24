@@ -1,10 +1,10 @@
-import type { Pool } from 'pg';
+import type { Pool } from "pg";
 
-export type SearchType = 'posts' | 'profiles' | 'all';
+export type SearchType = "posts" | "profiles" | "all";
 
 export interface SearchResult {
   id: string;
-  type: 'post' | 'profile';
+  type: "post" | "profile";
   rank: number;
   title?: string;
   username?: string;
@@ -32,13 +32,13 @@ interface CursorPayload {
 }
 
 function encodeCursor(payload: CursorPayload): string {
-  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
 function decodeCursor(cursor: string): CursorPayload | null {
   try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-    if (typeof parsed?.rank === 'number' && typeof parsed?.id === 'string') {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (typeof parsed?.rank === "number" && typeof parsed?.id === "string") {
       return { rank: parsed.rank, id: parsed.id };
     }
     return null;
@@ -52,20 +52,43 @@ function normalizeLimit(limit?: number): number {
   return Math.min(Math.floor(limit), MAX_LIMIT);
 }
 
-function buildTsQuery(q: string): string {
-  // Convert free-text input into a safe tsquery string: split on whitespace,
-  // strip tsquery operators, and join terms with AND.
-  const terms = q
-    .split(/\s+/)
-    .map((t) => t.replace(/[&|!():*'"<>]/g, '').trim())
-    .filter((t) => t.length > 0);
-  if (terms.length === 0) return '';
-  return terms.map((t) => `${t}:*`).join(' & ');
+export interface ParsedQuery {
+  terms: string[];
+  hashtags: string[];
+  mentions: string[];
+}
+
+/** Bound input before removing SQL punctuation and control characters. */
+export function sanitiseQuery(query: string): string {
+  return query
+    .slice(0, 200)
+    .replace(/['"`;\\()\[\]{}\x00-\x1f\x7f-]/g, " ")
+    .trim();
+}
+
+/** Extract identifiers only at token boundaries, so emails are ordinary text. */
+export function parseQuery(query: string): ParsedQuery {
+  const parsed: ParsedQuery = { terms: [], hashtags: [], mentions: [] };
+  const text = sanitiseQuery(query).replace(
+    /(^|\s)[#@]([\p{L}\p{N}_]+)/gu,
+    (token, boundary: string, identifier: string) => {
+      (token.trimStart().startsWith("#") ? parsed.hashtags : parsed.mentions).push(identifier);
+      return boundary;
+    }
+  );
+  parsed.terms = text.match(/[\p{L}\p{N}_]+/gu) ?? [];
+  return parsed;
+}
+
+/** Only word characters reach the tsquery grammar; user operators are discarded. */
+export function buildTsQuery(query: string): string {
+  const { terms, hashtags, mentions } = parseQuery(query);
+  return [...terms, ...hashtags, ...mentions].map((term) => `${term}:*`).join(" & ");
 }
 
 interface Row {
   id: string;
-  type: 'post' | 'profile';
+  type: "post" | "profile";
   rank: number;
   title: string | null;
   username: string | null;
@@ -83,8 +106,8 @@ export async function search(pool: Pool, params: SearchParams): Promise<SearchRe
   const cursorRank = cursor ? cursor.rank : null;
   const cursorId = cursor ? cursor.id : null;
 
-  const includePosts = params.type === 'posts' || params.type === 'all';
-  const includeProfiles = params.type === 'profiles' || params.type === 'all';
+  const includePosts = params.type === "posts" || params.type === "all";
+  const includeProfiles = params.type === "profiles" || params.type === "all";
 
   const parts: string[] = [];
   const values: unknown[] = [tsquery];
@@ -121,9 +144,9 @@ export async function search(pool: Pool, params: SearchParams): Promise<SearchRe
     return { results: [], nextCursor: null };
   }
 
-  const union = parts.join('\nUNION ALL\n');
+  const union = parts.join("\nUNION ALL\n");
 
-  let where = '';
+  let where = "";
   if (cursorRank !== null && cursorId !== null) {
     values.push(cursorRank, cursorId);
     where = `WHERE (rank < $2 OR (rank = $2 AND id > $3))`;
@@ -155,7 +178,8 @@ export async function search(pool: Pool, params: SearchParams): Promise<SearchRe
   }));
 
   const last = page[page.length - 1];
-  const nextCursor = hasMore && last ? encodeCursor({ rank: Number(last.rank), id: last.id }) : null;
+  const nextCursor =
+    hasMore && last ? encodeCursor({ rank: Number(last.rank), id: last.id }) : null;
 
   return { results, nextCursor };
 }
