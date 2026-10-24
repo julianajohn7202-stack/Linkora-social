@@ -214,20 +214,33 @@ function rowToPreferences(address: string, row: any): UserNotificationPreference
   }
 
   // Then if a JSON preferences column exists, overlay it
-  if (row.preferences && typeof row.preferences === "object") {
-    for (const [key, val] of Object.entries(row.preferences)) {
+  let preferencesObj = row.preferences;
+  if (typeof preferencesObj === "string") {
+    try {
+      preferencesObj = JSON.parse(preferencesObj);
+    } catch {
+      preferencesObj = undefined;
+    }
+  }
+
+  if (preferencesObj && typeof preferencesObj === "object") {
+    for (const [key, val] of Object.entries(preferencesObj)) {
       if (val && typeof val === "object") {
         types[key] = {
           push_enabled:
             (val as any).push_enabled ??
+            (val as any).push ??
             types[key]?.push_enabled ??
             defaultChannelPreferences.push_enabled,
           email_enabled:
             (val as any).email_enabled ??
+            (val as any).email ??
             types[key]?.email_enabled ??
             defaultChannelPreferences.email_enabled,
           inapp_enabled:
             (val as any).inapp_enabled ??
+            (val as any).inApp ??
+            (val as any).in_app_enabled ??
             types[key]?.inapp_enabled ??
             defaultChannelPreferences.inapp_enabled,
         };
@@ -541,10 +554,16 @@ export function parsePreferencesInput(
   if (typeof body.push_enabled === "boolean") pushEnabled = body.push_enabled;
   if (typeof body.email_enabled === "boolean") emailEnabled = body.email_enabled;
   if (typeof body.inapp_enabled === "boolean") inappEnabled = body.inapp_enabled;
+  if (typeof body.in_app_enabled === "boolean") inappEnabled = body.in_app_enabled;
   if (typeof body.browser_push_enabled === "boolean") pushEnabled = body.browser_push_enabled;
 
-  // Handle types object { types: { new_followers: { push_enabled, email_enabled, inapp_enabled } } }
-  const typesInput = body.types && typeof body.types === "object" ? body.types : body;
+  // Handle types object { types: { new_followers: { push_enabled, email_enabled, inapp_enabled } } } or { preferences: { ... } }
+  const typesInput =
+    body.types && typeof body.types === "object"
+      ? body.types
+      : body.preferences && typeof body.preferences === "object"
+        ? body.preferences
+        : body;
 
   for (const type of SUPPORTED_NOTIFICATION_TYPES) {
     const typePref = typesInput[type];
@@ -574,7 +593,9 @@ export function parsePreferencesInput(
               ? typePref.inapp_enabled
               : typeof typePref.inApp === "boolean"
                 ? typePref.inApp
-                : (types[type]?.inapp_enabled ?? true),
+                : typeof typePref.in_app_enabled === "boolean"
+                  ? typePref.in_app_enabled
+                  : (types[type]?.inapp_enabled ?? true),
         };
       }
     }

@@ -416,5 +416,62 @@ describe("Notification Preferences Engine", () => {
       expect(res.statusCode).toBe(403);
       expect(res.body.error).toMatch(/does not match/i);
     });
+
+    it("PUT /preferences/:address accepts nested preferences field and in_app_enabled alias", async () => {
+      const address = "GBPREFSNESTED1";
+      const { req, res } = createMockReqRes({
+        params: { address },
+        headers: { authorization: "Bearer nested-token-123" },
+        body: {
+          in_app_enabled: true,
+          preferences: {
+            direct_messages: {
+              push_enabled: true,
+              email_enabled: true,
+              in_app_enabled: false,
+            },
+          },
+        },
+      });
+
+      await updatePreferencesHandler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.types.direct_messages).toEqual({
+        push_enabled: true,
+        email_enabled: true,
+        inapp_enabled: false,
+      });
+    });
+
+    it("GET /preferences/:address handles stringified preferences JSON from database", async () => {
+      const address = "GBDBSTRINGJSON";
+      const mockQuery = jest.fn().mockImplementation((sql: string) => {
+        if (sql.includes("SELECT * FROM notification_preferences")) {
+          return Promise.resolve({
+            rows: [
+              {
+                address,
+                new_followers: true,
+                preferences: JSON.stringify({
+                  new_followers: { push_enabled: false, email_enabled: true, inapp_enabled: true },
+                }),
+              },
+            ],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      const mockPool = { query: mockQuery } as unknown as Pool;
+      setDatabasePool(mockPool);
+
+      const prefs = await getUserPreferences(address);
+      expect(prefs.types!["new_followers"]).toEqual({
+        push_enabled: false,
+        email_enabled: true,
+        inapp_enabled: true,
+      });
+    });
   });
 });
