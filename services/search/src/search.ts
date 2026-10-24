@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { buildTsQuery, parseQuery } from "./query";
 import { calculatePostRank, calculateProfileRank } from "./ranking";
 
 export interface SearchResult {
@@ -17,7 +18,9 @@ const MAX_LIMIT = 100;
 const CANDIDATE_MULTIPLIER = 5;
 
 function safeLimit(limit: number): number {
-  return Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), MAX_LIMIT) : DEFAULT_LIMIT;
+  return Number.isFinite(limit)
+    ? Math.min(Math.max(Math.trunc(limit), 1), MAX_LIMIT)
+    : DEFAULT_LIMIT;
 }
 
 interface ProfileRow {
@@ -41,15 +44,15 @@ async function findProfiles(pool: Pool, query: string, limit: number): Promise<S
     `SELECT p.address,
             p.username,
             ts_rank(to_tsvector('english', COALESCE(p.username, '')),
-                    websearch_to_tsquery('english', $1)) AS rank,
+                    to_tsquery('english', $1)) AS rank,
             COALESCE(r.score, 0)::int AS reputation_score
        FROM profiles AS p
        LEFT JOIN reputation_scores AS r ON r.user_address = p.address
       WHERE to_tsvector('english', COALESCE(p.username, ''))
-            @@ websearch_to_tsquery('english', $1)
+            @@ to_tsquery('english', $1)
       ORDER BY rank DESC, p.address ASC
       LIMIT $2`,
-    [query, limit * CANDIDATE_MULTIPLIER]
+    [buildTsQuery(query), limit * CANDIDATE_MULTIPLIER]
   );
 
   return rows.map((row) => ({
@@ -59,13 +62,24 @@ async function findProfiles(pool: Pool, query: string, limit: number): Promise<S
     title: row.username,
     snippet: null,
     rank: calculateProfileRank(
-      { address: row.address, username: row.username, bio: "", reputationScore: row.reputation_score, tsRank: Number(row.rank) },
+      {
+        address: row.address,
+        username: row.username,
+        bio: "",
+        reputationScore: row.reputation_score,
+        tsRank: Number(row.rank),
+      },
       query
     ),
   }));
 }
 
-async function findPosts(pool: Pool, query: string, limit: number): Promise<SearchResult[]> {
+async function findPosts(
+  pool: Pool,
+  query: string,
+  limit: number,
+  tags: string[] = []
+): Promise<SearchResult[]> {
   const now = new Date();
   const { rows } = await pool.query<PostRow>(
     `SELECT p.id::text AS id,
@@ -74,14 +88,15 @@ async function findPosts(pool: Pool, query: string, limit: number): Promise<Sear
             p.like_count,
             p.tip_total,
             ts_rank(to_tsvector('english', COALESCE(p.content, '')),
-                    websearch_to_tsquery('english', $1)) AS rank
+                    to_tsquery('english', $1)) AS rank
        FROM posts AS p
       WHERE p.deleted_at IS NULL
-        AND to_tsvector('english', COALESCE(p.content, ''))
-            @@ websearch_to_tsquery('english', $1)
+        AND ($1 = '' OR to_tsvector('english', COALESCE(p.content, ''))
+            @@ to_tsquery('english', $1))
+        AND (cardinality($3::text[]) = 0 OR p.tags @> $3::text[])
       ORDER BY rank DESC, p.created_at DESC, p.id ASC
       LIMIT $2`,
-    [query, limit * CANDIDATE_MULTIPLIER]
+    [buildTsQuery(query), limit * CANDIDATE_MULTIPLIER, tags.map((tag) => tag.toLowerCase())]
   );
 
   return rows.map((row) => ({
@@ -109,12 +124,22 @@ function compareResults(a: SearchResult, b: SearchResult): number {
   return b.rank - a.rank || a.type.localeCompare(b.type) || a.ref.localeCompare(b.ref);
 }
 
-/** Search both profiles and posts, then apply the deterministic composite ranking. */
-export async function searchAll(pool: Pool, query: string, limit = DEFAULT_LIMIT): Promise<SearchResult[]> {
+/** Token-only queries select their corresponding search paths; mixed tokens search both. */
+export async function searchAll(
+  pool: Pool,
+  query: string,
+  limit = DEFAULT_LIMIT
+): Promise<SearchResult[]> {
   const boundedLimit = safeLimit(limit);
+  const { terms, hashtags, mentions } = parseQuery(query);
+  if (!terms.length && !hashtags.length && !mentions.length) return [];
   const [profiles, posts] = await Promise.all([
-    findProfiles(pool, query, boundedLimit),
-    findPosts(pool, query, boundedLimit),
+    mentions.length || !hashtags.length
+      ? findProfiles(pool, [...terms, ...mentions].join(" "), boundedLimit)
+      : [],
+    hashtags.length || !mentions.length
+      ? findPosts(pool, terms.join(" "), boundedLimit, hashtags)
+      : [],
   ]);
   return [...profiles, ...posts].sort(compareResults).slice(0, boundedLimit);
 }
@@ -125,14 +150,22 @@ export async function searchProfiles(
   query: string,
   limit = DEFAULT_LIMIT
 ): Promise<SearchResult[]> {
-  return (await findProfiles(pool, query, safeLimit(limit))).sort(compareResults).slice(0, safeLimit(limit));
+  const { terms, mentions } = parseQuery(query);
+  if (!terms.length && !mentions.length) return [];
+  return (await findProfiles(pool, [...terms, ...mentions].join(" "), safeLimit(limit)))
+    .sort(compareResults)
+    .slice(0, safeLimit(limit));
 }
 
-/** Full-text search limited to posts. */
+/** Full-text and tag search limited to posts. */
 export async function searchPosts(
   pool: Pool,
   query: string,
   limit = DEFAULT_LIMIT
 ): Promise<SearchResult[]> {
-  return (await findPosts(pool, query, safeLimit(limit))).sort(compareResults).slice(0, safeLimit(limit));
+  const { terms, hashtags } = parseQuery(query);
+  if (!terms.length && !hashtags.length) return [];
+  return (await findPosts(pool, terms.join(" "), safeLimit(limit), hashtags))
+    .sort(compareResults)
+    .slice(0, safeLimit(limit));
 }
