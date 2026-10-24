@@ -127,8 +127,9 @@ export function getClientIP(
   return ips[0];
 }
 
-const RATE_LIMIT_ANON_RPM = parseInt(process.env.RATE_LIMIT_ANON_RPM || "100", 10);
-const RATE_LIMIT_AUTH_RPM = parseInt(process.env.RATE_LIMIT_AUTH_RPM || "300", 10);
+const RATE_LIMIT_ANON_RPM = parseInt(process.env.RATE_LIMIT_ANON_RPM || "60", 10);
+const RATE_LIMIT_AUTH_RPM = parseInt(process.env.RATE_LIMIT_AUTH_RPM || "60", 10);
+const HTTP_RATE_LIMIT_WINDOW_MS = 60_000;
 
 // ── WebSocket connection limiter ──────────────────────────────────────────────
 
@@ -265,40 +266,58 @@ async function buildRedisStore(client: Redis): Promise<RateLimitOptions["store"]
 let anonLimiter: ReturnType<typeof rateLimit>;
 let authLimiter: ReturnType<typeof rateLimit>;
 
-function buildLimiters(store?: RateLimitOptions["store"]): void {
+function sendRateLimitResponse(req: Request, res: Response, message: string): void {
+  const resetTime = (req as Request & { rateLimit?: { resetTime?: Date } }).rateLimit?.resetTime;
+  const retryAfter = resetTime
+    ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+    : Math.ceil(HTTP_RATE_LIMIT_WINDOW_MS / 1000);
+  res.setHeader("Retry-After", String(retryAfter));
+  const err = rateLimitedError(message);
+  res.status(err.statusCode).json(err.toJSON(req.requestId));
+}
+
+export function createRateLimiters(store?: RateLimitOptions["store"]): {
+  anonLimiter: ReturnType<typeof rateLimit>;
+  authLimiter: ReturnType<typeof rateLimit>;
+} {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const shared: any = {
-    windowMs: 60_000,
+    windowMs: HTTP_RATE_LIMIT_WINDOW_MS,
     standardHeaders: "draft-8",
     legacyHeaders: false,
     ...(store ? { store } : {}),
   };
 
-  anonLimiter = rateLimit({
-    ...shared,
-    limit: RATE_LIMIT_ANON_RPM,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    keyGenerator: (req: any) => getClientIP(req),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    handler: (_req: any, res: any) => {
-      const err = rateLimitedError(`Max ${RATE_LIMIT_ANON_RPM} requests per minute per IP`);
-      res.status(err.statusCode).json(err.toJSON(_req.requestId));
-    },
-  });
+  return {
+    anonLimiter: rateLimit({
+      ...shared,
+      limit: RATE_LIMIT_ANON_RPM,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      keyGenerator: (req: any) => getClientIP(req),
+      handler: (req: Request, res: Response) => {
+        sendRateLimitResponse(req, res, `Max ${RATE_LIMIT_ANON_RPM} requests per minute per IP`);
+      },
+    }),
+    authLimiter: rateLimit({
+      ...shared,
+      limit: RATE_LIMIT_AUTH_RPM,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      keyGenerator: (req: any) => req.stellarAddress || getClientIP(req),
+      handler: (req: Request, res: Response) => {
+        sendRateLimitResponse(
+          req,
+          res,
+          `Max ${RATE_LIMIT_AUTH_RPM} requests per minute per authenticated user`
+        );
+      },
+    }),
+  };
+}
 
-  authLimiter = rateLimit({
-    ...shared,
-    limit: RATE_LIMIT_AUTH_RPM,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    keyGenerator: (req: any) => req.stellarAddress || getClientIP(req),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    handler: (_req: any, res: any) => {
-      const err = rateLimitedError(
-        `Max ${RATE_LIMIT_AUTH_RPM} requests per minute per authenticated user`
-      );
-      res.status(err.statusCode).json(err.toJSON(_req.requestId));
-    },
-  });
+function buildLimiters(store?: RateLimitOptions["store"]): void {
+  const limiters = createRateLimiters(store);
+  anonLimiter = limiters.anonLimiter;
+  authLimiter = limiters.authLimiter;
 }
 
 /**

@@ -70,6 +70,13 @@ The report is serialised as a CBOR array in the field order listed above, then S
 
 ## Querying Metrics by Period
 
+`computeCreatorMetrics(database, creatorAddress, period, now?)` aggregates rows
+from `creator_analytics`. `day` includes the current UTC date, `week` includes
+the current date and previous six days, and `month` includes the current date
+and previous 29 days. `all` includes every retained snapshot. Count and tip
+fields are summed, follower count uses the latest snapshot in the period,
+follower delta is summed, and engagement rate is averaged across snapshots.
+
 The analytics oracle exposes a REST endpoint that returns the latest signed attestation for a given creator address. Each attestation includes the full `CreatorMetrics` payload along with the oracle signature and on-chain transaction hash.
 
 ### Endpoint

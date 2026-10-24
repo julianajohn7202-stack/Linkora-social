@@ -41,7 +41,8 @@ fn test_reputation_score_clamps_at_zero_and_decays_per_window() {
 
     assert_eq!(client.update_reputation_score(&admin, &user, &1_000), 1_000);
     assert_eq!(client.get_reputation_score(&user), 1_000);
-    env.ledger().set_sequence(17_280 * 2 + 1);
+    env.ledger()
+        .with_mut(|l| l.sequence_number = 17_280 * 2 + 1);
     assert_eq!(client.apply_reputation_decay(&admin, &user), 902);
     assert_eq!(client.update_reputation_score(&admin, &user, &-10_000), 0);
     assert_eq!(client.get_reputation_score(&user), 0);
@@ -2267,7 +2268,7 @@ fn test_cannot_revoke_last_admin() {
     // Try to revoke the admin role from the only admin - should panic
     let result = client.try_revoke_role(&admin, &admin, &Role::Admin);
     assert!(result.is_err());
-    
+
     // Admin should still have the role after failed revocation
     assert!(client.has_role(&admin, &Role::Admin));
 }
@@ -2285,7 +2286,7 @@ fn test_cannot_revoke_last_upgrader() {
     // Try to revoke the upgrader role from the only upgrader (admin) - should panic
     let result = client.try_revoke_role(&admin, &admin, &Role::Upgrader);
     assert!(result.is_err());
-    
+
     // Admin should still have the upgrader role after failed revocation
     assert!(client.has_role(&admin, &Role::Upgrader));
 }
@@ -2304,7 +2305,7 @@ fn test_can_revoke_admin_when_multiple_exist() {
     // Now we can revoke one admin since there are two
     client.revoke_role(&admin, &admin2, &Role::Admin);
     assert!(!client.has_role(&admin2, &Role::Admin));
-    
+
     // Original admin should still have the role
     assert!(client.has_role(&admin, &Role::Admin));
 }
@@ -2324,7 +2325,7 @@ fn test_can_revoke_upgrader_when_multiple_exist() {
     // Now we can revoke one upgrader since there are two
     client.revoke_role(&admin, &upgrader1, &Role::Upgrader);
     assert!(!client.has_role(&upgrader1, &Role::Upgrader));
-    
+
     // Admin should still have the upgrader role
     assert!(client.has_role(&admin, &Role::Upgrader));
 }
@@ -2340,14 +2341,14 @@ fn test_can_revoke_non_critical_roles() {
     // Grant non-critical roles
     client.grant_role(&admin, &moderator, &Role::Moderator);
     client.grant_role(&admin, &pauser, &Role::Pauser);
-    
+
     assert!(client.has_role(&moderator, &Role::Moderator));
     assert!(client.has_role(&pauser, &Role::Pauser));
 
     // Should be able to revoke these even if they're the only ones with the role
     client.revoke_role(&admin, &moderator, &Role::Moderator);
     client.revoke_role(&admin, &pauser, &Role::Pauser);
-    
+
     assert!(!client.has_role(&moderator, &Role::Moderator));
     assert!(!client.has_role(&pauser, &Role::Pauser));
 }
@@ -2361,10 +2362,10 @@ fn test_admin_can_remove_own_admin_role_with_backup() {
 
     // Grant admin role to second account
     client.grant_role(&admin, &admin2, &Role::Admin);
-    
+
     // Original admin can remove their own role since there's a backup
     client.revoke_role(&admin, &admin, &Role::Admin);
-    
+
     assert!(!client.has_role(&admin, &Role::Admin));
     assert!(client.has_role(&admin2, &Role::Admin));
 }
@@ -3800,7 +3801,13 @@ fn test_pool_non_admin_remove_admin_panics() {
     let outsider = Address::generate(&env);
     let token = setup_token(&env, &pool_admin);
     let pool_id = symbol_short!("badrem");
-    client.create_pool(&admin, &pool_id, &token, &vec![&env, pool_admin.clone()], &1);
+    client.create_pool(
+        &admin,
+        &pool_id,
+        &token,
+        &vec![&env, pool_admin.clone()],
+        &1,
+    );
 
     client.remove_pool_admin(&vec![&env, outsider], &pool_id, &pool_admin);
 }
@@ -4665,7 +4672,7 @@ fn test_get_dm_key_returns_none_when_not_published() {
 
 // ── Issue #538: On-chain governance tests ────────────────────────────────────
 
-fn setup_governance(env: &Env) -> (LinkoraContractClient<'_>, Address, Address) {
+pub fn setup_governance(env: &Env) -> (LinkoraContractClient<'_>, Address, Address) {
     let (client, admin, treasury) = setup_contract(env);
     client.gov_init_config(&admin, &60, &100, &200, &50, &30);
     (client, admin, treasury)
@@ -4926,11 +4933,105 @@ fn test_gov_double_vote_panics() {
     let (client, _admin, _) = setup_governance(&env);
 
     let proposer = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.set_profile(&proposer, &String::from_str(&env, "proposer"), &token);
     let proposal_id = client.gov_propose(&proposer, &GovParameter::FeeBps, &500, &None);
 
     let voter = Address::generate(&env);
     client.gov_vote(&voter, &proposal_id, &true);
     client.gov_vote(&voter, &proposal_id, &false);
+}
+
+// ── Issue #115: Governance vote replay prevention and overwrite behavior ──────────
+
+/// Test Issue #115: Governance vote replay prevention and overwrite behavior.
+///
+/// Specification & Behavior Definition:
+/// - Replay / Overwrite Policy: Rejection by Panic ("already voted").
+///   When a voter submits a second vote on the same proposal from the same address,
+///   the contract strictly REJECTS the vote (panics with "already voted") rather than
+///   replacing or updating the previous vote.
+/// - Vote Count Consistency:
+///   Because the second vote is rejected, the proposal's vote tally (`votes_for`, `votes_against`)
+///   remains strictly consistent with the initial valid vote. The second attempt does not alter,
+///   increment, or decrement existing counts.
+#[test]
+fn test_vote_overwrite_behavior() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _) = setup_governance(&env);
+
+    let proposer = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.set_profile(&proposer, &String::from_str(&env, "proposer_v_rep"), &token);
+    let proposal_id = client.gov_propose(&proposer, &GovParameter::FeeBps, &500, &None);
+
+    let voter1 = Address::generate(&env);
+
+    // Initial state: proposal starts with 0 votes for and 0 votes against
+    let initial_proposal = client.gov_get_proposal(&proposal_id);
+    assert_eq!(initial_proposal.votes_for, 0);
+    assert_eq!(initial_proposal.votes_against, 0);
+
+    // 1. Cast first vote: voter1 votes FOR the proposal
+    client.gov_vote(&voter1, &proposal_id, &true);
+
+    let proposal_after_first = client.gov_get_proposal(&proposal_id);
+    assert_eq!(proposal_after_first.votes_for, 1);
+    assert_eq!(proposal_after_first.votes_against, 0);
+
+    // 2. Second vote attempt: voter1 attempts to vote again with support = false.
+    // The contract must reject the second vote with a panic ("already voted").
+    // With `try_gov_vote`, the error is safely caught and asserted.
+    let second_vote_res = client.try_gov_vote(&voter1, &proposal_id, &false);
+    assert!(
+        second_vote_res.is_err(),
+        "Second vote from same address must be rejected with error"
+    );
+
+    // 3. Assert vote counts remain strictly consistent and unchanged
+    let proposal_after_second = client.gov_get_proposal(&proposal_id);
+    assert_eq!(
+        proposal_after_second.votes_for, 1,
+        "votes_for count must remain 1 after rejected vote replay"
+    );
+    assert_eq!(
+        proposal_after_second.votes_against, 0,
+        "votes_against count must remain 0 after rejected vote replay"
+    );
+
+    // 4. Verify that another voter can legitimately vote AGAINST
+    let voter2 = Address::generate(&env);
+    client.gov_vote(&voter2, &proposal_id, &false);
+
+    let proposal_after_voter2 = client.gov_get_proposal(&proposal_id);
+    assert_eq!(proposal_after_voter2.votes_for, 1);
+    assert_eq!(proposal_after_voter2.votes_against, 1);
+
+    // Voter 2 also cannot replay or overwrite their vote to true
+    let voter2_second_vote_res = client.try_gov_vote(&voter2, &proposal_id, &true);
+    assert!(
+        voter2_second_vote_res.is_err(),
+        "Second vote from voter 2 must be rejected"
+    );
+
+    let final_proposal = client.gov_get_proposal(&proposal_id);
+    assert_eq!(final_proposal.votes_for, 1);
+    assert_eq!(final_proposal.votes_against, 1);
+}
+
+/// Test Issue #115: Voting on a non-existent proposal panics with "proposal not found".
+#[test]
+#[should_panic(expected = "proposal not found")]
+fn test_vote_non_existent_proposal_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _) = setup_governance(&env);
+
+    let voter = Address::generate(&env);
+    let non_existent_proposal_id: u64 = 999_999;
+
+    client.gov_vote(&voter, &non_existent_proposal_id, &true);
 }
 
 #[test]
@@ -8767,13 +8868,7 @@ fn test_pool_deposit_zero_amount_panics() {
     let token = setup_token(&env, &depositor);
     let pool_id = symbol_short!("pool_d0");
 
-    client.create_pool(
-        &admin,
-        &pool_id,
-        &token,
-        &vec![&env, admin.clone()],
-        &1,
-    );
+    client.create_pool(&admin, &pool_id, &token, &vec![&env, admin.clone()], &1);
 
     // Must panic — amount of 0 is invalid.
     client.pool_deposit(&depositor, &pool_id, &token, &0);
@@ -8793,13 +8888,7 @@ fn test_pool_deposit_negative_amount_panics() {
     let token = setup_token(&env, &depositor);
     let pool_id = symbol_short!("pool_dn");
 
-    client.create_pool(
-        &admin,
-        &pool_id,
-        &token,
-        &vec![&env, admin.clone()],
-        &1,
-    );
+    client.create_pool(&admin, &pool_id, &token, &vec![&env, admin.clone()], &1);
 
     // Must panic — negative amount is invalid.
     client.pool_deposit(&depositor, &pool_id, &token, &-1);
@@ -8818,13 +8907,7 @@ fn test_pool_deposit_zero_does_not_change_pool_balance() {
     let token = setup_token(&env, &depositor);
     let pool_id = symbol_short!("pool_st");
 
-    client.create_pool(
-        &admin,
-        &pool_id,
-        &token,
-        &vec![&env, admin.clone()],
-        &1,
-    );
+    client.create_pool(&admin, &pool_id, &token, &vec![&env, admin.clone()], &1);
 
     // Confirm initial balance is 0
     assert_eq!(
@@ -8850,13 +8933,7 @@ fn test_pool_deposit_valid_amount_succeeds_after_invalid_guard_exists() {
 
     let pool_id = symbol_short!("pool_ok");
 
-    client.create_pool(
-        &admin,
-        &pool_id,
-        &token,
-        &vec![&env, admin.clone()],
-        &1,
-    );
+    client.create_pool(&admin, &pool_id, &token, &vec![&env, admin.clone()], &1);
 
     client.pool_deposit(&depositor, &pool_id, &token, &250);
 
@@ -8891,13 +8968,7 @@ fn test_pool_withdraw_zero_amount_panics() {
 
     let pool_id = symbol_short!("pool_w0");
 
-    client.create_pool(
-        &admin,
-        &pool_id,
-        &token,
-        &vec![&env, admin.clone()],
-        &1,
-    );
+    client.create_pool(&admin, &pool_id, &token, &vec![&env, admin.clone()], &1);
     client.pool_deposit(&depositor, &pool_id, &token, &100);
 
     // Must panic — amount of 0 is invalid.
@@ -8922,13 +8993,7 @@ fn test_pool_withdraw_negative_amount_panics() {
 
     let pool_id = symbol_short!("pool_wn");
 
-    client.create_pool(
-        &admin,
-        &pool_id,
-        &token,
-        &vec![&env, admin.clone()],
-        &1,
-    );
+    client.create_pool(&admin, &pool_id, &token, &vec![&env, admin.clone()], &1);
     client.pool_deposit(&depositor, &pool_id, &token, &100);
 
     // Must panic — negative amount is invalid.
@@ -8951,13 +9016,7 @@ fn test_pool_withdraw_valid_amount_reduces_balance() {
 
     let pool_id = symbol_short!("pool_wv");
 
-    client.create_pool(
-        &admin,
-        &pool_id,
-        &token,
-        &vec![&env, admin.clone()],
-        &1,
-    );
+    client.create_pool(&admin, &pool_id, &token, &vec![&env, admin.clone()], &1);
     client.pool_deposit(&depositor, &pool_id, &token, &200);
 
     client.pool_withdraw(&vec![&env, admin.clone()], &pool_id, &75, &recipient);

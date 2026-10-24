@@ -174,9 +174,13 @@ fn property_reputation_decay_converges_without_underflow() {
     client.update_reputation_score(&admin, &user, &10_000);
 
     for window in 1..=200 {
-        env.ledger().set_sequence(window * DECAY_WINDOW);
+        env.ledger()
+            .with_mut(|l| l.sequence_number = window * DECAY_WINDOW);
         let score = client.apply_reputation_decay(&admin, &user);
-        assert!(score >= 0, "decay produced a negative score in window {window}");
+        assert!(
+            score >= 0,
+            "decay produced a negative score in window {window}"
+        );
     }
 
     assert_eq!(client.get_reputation_score(&user), 0);
@@ -198,7 +202,7 @@ proptest! {
         client.update_reputation_score(&admin, &user, &initial_score);
 
         for window in 1..=decay_windows {
-            env.ledger().set_sequence(window * DECAY_WINDOW);
+            env.ledger().with_mut(|l| l.sequence_number = window * DECAY_WINDOW);
             let score = client.apply_reputation_decay(&admin, &user);
             prop_assert!(score >= 0);
             prop_assert!(client.get_reputation_score(&user) >= 0);
