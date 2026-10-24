@@ -23,7 +23,9 @@ pub fn update_score(env: &Env, user: &Address, delta: i64) -> i64 {
     env.storage().persistent().set(&key, &updated);
     let ledger_key = StorageKey::ReputationDecayLedger(user.clone());
     if !env.storage().persistent().has(&ledger_key) {
-        env.storage().persistent().set(&ledger_key, &env.ledger().sequence());
+        env.storage()
+            .persistent()
+            .set(&ledger_key, &env.ledger().sequence());
     }
     updated
 }

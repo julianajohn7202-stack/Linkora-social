@@ -13,12 +13,11 @@ mod rewards;
 mod validation;
 
 pub use errors::{ContractError, RentError};
-pub use storage_keys::StorageKey;
 use validation::{
     validate_address_list, validate_amount, validate_gov_parameter, validate_non_default_address,
     validate_protocol_fee, validate_pubkey_32, validate_report_verdict,
-    validate_reporter_can_report, validate_signature, validate_u32_range, validate_username,
-    MAX_BIO_LEN, MAX_CONTENT_LEN, MAX_FEE_BPS, MAX_QUORUM,
+    validate_reporter_can_report, validate_signature, validate_u32_range, validate_unique_signers,
+    validate_username, MAX_BIO_LEN, MAX_CONTENT_LEN, MAX_FEE_BPS, MAX_QUORUM,
 };
 
 // ── Storage Key Enum ──────────────────────────────────────────────────────────
@@ -52,7 +51,7 @@ pub enum StorageKey {
     NullifierSet(Address, BytesN<32>), // persistent: (user, nullifier) -> bool (prevents replay)
     CredentialAuthority, // persistent: Ed25519 pubkey trusted to sign credential root updates
     // ── Governance ────────────────────────────────────────────────────────
-    GovProposal(u64),      // persistent: proposal_id -> GovProposal
+    GovProposal(u64),              // persistent: proposal_id -> GovProposal
     GovVote(u64, Address), // persistent: (proposal_id, voter) -> bool (prevents double-voting)
     GovConfig,             // persistent: governance configuration
     GovProposalCount,      // persistent: next proposal id counter
@@ -818,7 +817,7 @@ impl LinkoraContract {
         // Prevent removing the last admin or upgrader
         if matches!(role, Role::Admin | Role::Upgrader) {
             let count_with_role = Self::count_accounts_with_role(&env, role);
-            
+
             // If this would be the last account with this role, reject the operation
             if count_with_role <= 1 {
                 match role {
@@ -2042,15 +2041,19 @@ impl LinkoraContract {
         admin.require_auth();
         validate_non_default_address(&env, "token", &token_address);
         Self::require_role(&env, &admin, Role::Admin);
-        let (epoch, recipients, total) =
-            rewards::distribute(&env, &admin, &token_address, &claims);
+        let (epoch, recipients, total) = rewards::distribute(&env, &admin, &token_address, &claims);
         Self::bump(&env, &StorageKey::RewardToken(epoch));
 
         for (recipient, amount) in claims.iter() {
             Self::bump(&env, &StorageKey::RewardClaimable(recipient, epoch));
         }
 
-        RewardDistributionEvent { epoch, recipients, total }.publish(&env);
+        RewardDistributionEvent {
+            epoch,
+            recipients,
+            total,
+        }
+        .publish(&env);
         epoch
     }
 
@@ -2063,7 +2066,12 @@ impl LinkoraContract {
         let claimable_key = StorageKey::RewardClaimable(recipient.clone(), epoch);
         Self::bump(&env, &claimed_key);
         Self::bump(&env, &claimable_key);
-        RewardClaimEvent { epoch, recipient, amount }.publish(&env);
+        RewardClaimEvent {
+            epoch,
+            recipient,
+            amount,
+        }
+        .publish(&env);
         amount
     }
 
@@ -2624,11 +2632,7 @@ impl LinkoraContract {
         Self::require_role(&env, &admin, Role::Admin);
         let key = StorageKey::Pool(pool_id.clone());
         require_with_error!(&env, !env.storage().persistent().has(&key), "pool exists");
-        require_with_error!(
-            &env,
-            threshold > 0,
-            "invalid threshold"
-        );
+        require_with_error!(&env, threshold > 0, "invalid threshold");
         require_with_error!(
             &env,
             threshold <= initial_admins.len(),
@@ -3436,7 +3440,11 @@ impl LinkoraContract {
         let vote_end = proposal
             .created_ledger
             .saturating_add(proposal.vote_window_ledgers);
-        require_with_error!(&env, env.ledger().sequence() > vote_end, "vote window still open");
+        require_with_error!(
+            &env,
+            env.ledger().sequence() > vote_end,
+            "vote window still open"
+        );
 
         let total_votes = proposal.votes_for.saturating_add(proposal.votes_against);
         let approval_pct = if total_votes == 0 {
@@ -3454,11 +3462,7 @@ impl LinkoraContract {
         Self::bump(&env, &proposal_key);
 
         let open_count_key = StorageKey::GovOpenProposalCount(proposal.proposer.clone());
-        let open_count: u32 = env
-            .storage()
-            .persistent()
-            .get(&open_count_key)
-            .unwrap_or(0);
+        let open_count: u32 = env.storage().persistent().get(&open_count_key).unwrap_or(0);
         if open_count > 0 {
             env.storage()
                 .persistent()
@@ -4534,13 +4538,13 @@ impl LinkoraContract {
         let roles = Self::get_roles(env);
         let role_mask = Self::role_mask(role);
         let mut count = 0u32;
-        
+
         for (_, account_roles) in roles.iter() {
             if account_roles & role_mask != 0 {
                 count += 1;
             }
         }
-        
+
         count
     }
 

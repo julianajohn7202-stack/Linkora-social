@@ -3,8 +3,8 @@
 use linkora_contracts::{LinkoraContract, LinkoraContractClient};
 use proptest::prelude::*;
 use soroban_sdk::{
-    testutils::Address as _, token::Client as TokenClient, token::StellarAssetClient, Address,
-    Env, Map,
+    testutils::Address as _, token::Client as TokenClient, token::StellarAssetClient, Address, Env,
+    Map,
 };
 
 fn setup() -> (Env, LinkoraContractClient<'static>, Address, Address) {

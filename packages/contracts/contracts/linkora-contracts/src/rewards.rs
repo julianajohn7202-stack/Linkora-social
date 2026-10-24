@@ -30,12 +30,10 @@ pub fn distribute(
     let epoch = current_epoch(env)
         .checked_add(1)
         .unwrap_or_else(|| panic!("reward epoch overflow"));
-    token::Client::new(env, token_address).transfer(
-        admin,
-        &env.current_contract_address(),
-        &total,
-    );
-    env.storage().instance().set(&StorageKey::RewardEpoch, &epoch);
+    token::Client::new(env, token_address).transfer(admin, &env.current_contract_address(), &total);
+    env.storage()
+        .instance()
+        .set(&StorageKey::RewardEpoch, &epoch);
     env.storage()
         .persistent()
         .set(&StorageKey::RewardToken(epoch), token_address);
@@ -61,9 +59,10 @@ pub fn get_claimable(env: &Env, user: &Address, epoch: u64) -> i128 {
 }
 
 pub fn record_claims(env: &Env, epoch: u64, recipient: &Address, amount: i128) {
-    env.storage()
-        .persistent()
-        .set(&StorageKey::RewardClaimable(recipient.clone(), epoch), &amount);
+    env.storage().persistent().set(
+        &StorageKey::RewardClaimable(recipient.clone(), epoch),
+        &amount,
+    );
 }
 
 pub fn mark_claimed(env: &Env, epoch: u64, recipient: &Address) {
