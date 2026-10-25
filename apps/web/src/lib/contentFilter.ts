@@ -48,7 +48,7 @@
  *
  * @see {@link ContentViolation.POST_TOO_LONG}
  */
-export const MAX_POST_LENGTH = 280;
+export const MAX_POST_LENGTH = 500;
 
 /**
  * Allowed external URL domains for link previews and post embeds.
@@ -126,7 +126,7 @@ const PROFANITY_PATTERNS: RegExp[] = [/\b(?:fuck|shit|bitch|asshole)\b/i];
  * {@link MAX_POST_LENGTH} characters.
  *
  * **User-facing message:**
- * `"Post exceeds the 280-character limit."`
+ * `"Post exceeds the 500-character limit."`
  *
  * ---
  *
@@ -253,40 +253,32 @@ function containsExecutableContent(text: string): boolean {
   );
 }
 
+/**
+ * Returns `true` if `hostname` is present in {@link ALLOWED_LINK_DOMAINS}.
+ *
+ * A hostname is allowed when it exactly matches an entry, or when it is a
+ * subdomain of an allowed entry (e.g. `docs.github.com` matches `github.com`).
+ */
+function isAllowedHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^www\./, "");
+  return ALLOWED_LINK_DOMAINS.some(
+    (domain) => host === domain || host.endsWith(`.${domain}`),
+  );
+}
+
 // ─── Main filter function ─────────────────────────────────────────────────────
 
 /**
- * Applies all content moderation rules to `raw` and returns a
- * {@link FilterResult}.
+ * Validates post content against all moderation rules.
  *
- * Rules are evaluated in priority order:
- * 1. Empty / whitespace-only check ({@link ContentViolation.POST_EMPTY})
- * 2. Executable content check ({@link ContentViolation.EXECUTABLE_CONTENT})
- * 3. Length check ({@link ContentViolation.POST_TOO_LONG})
- * 4. Domain allowlist check ({@link ContentViolation.DISALLOWED_DOMAIN})
- * 5. Profanity check ({@link ContentViolation.PROFANITY})
- * 6. Spam pattern check ({@link ContentViolation.SPAM_DETECTED})
- *
- * If all checks pass the function returns `{ ok: true, sanitised }` where
- * `sanitised` is the trimmed input with any remaining HTML stripped.
- *
- * @param raw - The raw post content string submitted by the user.
- * @returns A {@link FilterResult} indicating whether the content is allowed.
- *
- * @example
- * ```ts
- * const r = filterContent("Hello world!");
- * // r.ok === true, r.sanitised === "Hello world!"
- *
- * const r2 = filterContent("x".repeat(300));
- * // r2.ok === false, r2.violation === ContentViolation.POST_TOO_LONG
- * ```
+ * Returns a {@link FilterResultOk} with the sanitised content when the input
+ * is clean, or a {@link FilterResultViolation} describing the first rule that
+ * was broken.
  */
 export function filterContent(raw: string): FilterResult {
-  const trimmed = raw.trim();
+  const content = raw.trim();
 
-  // 1. Empty check
-  if (!trimmed) {
+  if (content.length === 0) {
     return {
       ok: false,
       violation: ContentViolation.POST_EMPTY,
@@ -294,17 +286,7 @@ export function filterContent(raw: string): FilterResult {
     };
   }
 
-  // 2. Executable content check (run before length so we don't expose long scripts)
-  if (containsExecutableContent(trimmed)) {
-    return {
-      ok: false,
-      violation: ContentViolation.EXECUTABLE_CONTENT,
-      message: "Posts may not contain HTML tags or executable code.",
-    };
-  }
-
-  // 3. Length check
-  if (trimmed.length > MAX_POST_LENGTH) {
+  if (content.length > MAX_POST_LENGTH) {
     return {
       ok: false,
       violation: ContentViolation.POST_TOO_LONG,
@@ -312,10 +294,16 @@ export function filterContent(raw: string): FilterResult {
     };
   }
 
-  // 4. Domain allowlist check
-  const hostnames = extractHostnames(trimmed);
-  const disallowed = hostnames.find(
-    (h) => !ALLOWED_LINK_DOMAINS.includes(h as (typeof ALLOWED_LINK_DOMAINS)[number])
+  if (containsExecutableContent(content)) {
+    return {
+      ok: false,
+      violation: ContentViolation.EXECUTABLE_CONTENT,
+      message: "Posts may not contain HTML tags or executable code.",
+    };
+  }
+
+  const disallowed = extractHostnames(content).find(
+    (hostname) => !isAllowedHostname(hostname),
   );
   if (disallowed) {
     return {
@@ -325,18 +313,7 @@ export function filterContent(raw: string): FilterResult {
     };
   }
 
-  // 5. Profanity check
-  if (PROFANITY_PATTERNS.some((re) => re.test(trimmed))) {
-    return {
-      ok: false,
-      violation: ContentViolation.PROFANITY,
-      message: "Your post contains language that violates our community guidelines.",
-    };
-  }
-
-  // 6. Spam pattern check
-  const isSpam = SPAM_PATTERNS.some((re) => re.test(trimmed));
-  if (isSpam) {
+  if (SPAM_PATTERNS.some((pattern) => pattern.test(content))) {
     return {
       ok: false,
       violation: ContentViolation.SPAM_DETECTED,
@@ -344,36 +321,32 @@ export function filterContent(raw: string): FilterResult {
     };
   }
 
-  // All checks passed — strip any residual tags and return
-  const sanitised = trimmed.replace(/<[^>]+>/g, "").trim();
-  return { ok: true, sanitised };
-}
-
-// ─── Display name filter ──────────────────────────────────────────────────────
-
-/**
- * Validates and sanitises a creator display name.
- *
- * @param raw - The raw display-name string.
- * @returns A {@link FilterResult}. On success, `sanitised` is the trimmed name.
- *
- * @example
- * ```ts
- * filterDisplayName("Alice")      // ok: true
- * filterDisplayName("")           // violation: DISPLAY_NAME_INVALID
- * filterDisplayName("x".repeat(65)) // violation: DISPLAY_NAME_INVALID
- * ```
- */
-export function filterDisplayName(raw: string): FilterResult {
-  const trimmed = raw.trim();
-
-  if (trimmed.length === 0 || trimmed.length > 64) {
+  if (PROFANITY_PATTERNS.some((pattern) => pattern.test(content))) {
     return {
       ok: false,
-      violation: ContentViolation.DISPLAY_NAME_INVALID,
-      message: "Display name must be between 1 and 64 characters.",
+      violation: ContentViolation.PROFANITY,
+      message: "Your post contains language that violates our community guidelines.",
     };
   }
 
-  return { ok: true, sanitised: trimmed };
+  return { ok: true, sanitised: content };
+}
+
+/**
+ * Convenience wrapper used by the post composer before submission.
+ *
+ * Returns `null` when the content is valid, or the user-facing error message
+ * when a rule is violated. This keeps call sites in `CreatePost` terse:
+ *
+ * ```ts
+ * const error = checkPostContent(draft);
+ * if (error) {
+ *   setError(error);
+ *   return;
+ * }
+ * ```
+ */
+export function checkPostContent(raw: string): string | null {
+  const result = filterContent(raw);
+  return result.ok ? null : result.message;
 }

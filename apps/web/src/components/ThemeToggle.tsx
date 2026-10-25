@@ -1,19 +1,27 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useTheme } from "../contexts/ThemeContext";
 
 export function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isDark = theme === "dark";
 
   return (
     <button
       onClick={toggleTheme}
-      aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+      aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
+      aria-pressed={isDark}
       style={toggleStyles.button}
       title={`Current mode: ${theme}. Click to toggle.`}
     >
-      {theme === "dark" ? (
+      {isDark ? (
         <svg
           style={toggleStyles.icon}
           xmlns="http://www.w3.org/2000/svg"
@@ -48,7 +56,9 @@ export function ThemeToggle() {
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
         </svg>
       )}
-      <span style={toggleStyles.label}>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
+      <span style={toggleStyles.label}>
+        {mounted ? (isDark ? "Light Mode" : "Dark Mode") : "Theme"}
+      </span>
     </button>
   );
 }
