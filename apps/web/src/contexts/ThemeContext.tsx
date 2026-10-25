@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import {
   getStoredThemePreference,
   storeThemePreference,
@@ -24,12 +24,24 @@ function getInitialTheme(): ThemePreference {
   return getStoredThemePreference();
 }
 
+function applyTheme(theme: ThemePreference) {
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.theme = theme;
+  }
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<ThemePreference>(getInitialTheme);
+
+  // Keep the DOM in sync with the current theme (e.g. after hydration).
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   const setTheme = (newTheme: ThemePreference) => {
     setThemeState(newTheme);
     storeThemePreference(newTheme);
+    applyTheme(newTheme);
   };
 
   const toggleTheme = () => {
