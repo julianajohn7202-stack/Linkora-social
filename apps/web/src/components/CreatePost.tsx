@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { useWallet } from "./WalletProvider";
 import Link from "next/link";
 import { RichTextComposer } from "./RichTextComposer";
+import { checkPostContent } from "../lib/contentFilter";
 
 const TRANSACTION_FEE_ESTIMATE = "~0.00001 XLM";
 
@@ -82,6 +83,14 @@ export function CreatePost({ onSuccess, compact = false, submitFn = submitPost }
   const handleSubmit = useCallback(
     async (content: string, _attachments?: File[], pollOptions?: PollOption[]) => {
       if (!publicKey) return;
+
+      // Pre-submission content validation (length, URLs, banned content)
+      const validation = checkPostContent(content);
+      if (!validation.valid) {
+        setError(validation.error ?? "Content violates community guidelines");
+        setStatus("error");
+        return;
+      }
 
       setStatus("awaiting_signature");
       setError(null);
@@ -184,7 +193,7 @@ export function CreatePost({ onSuccess, compact = false, submitFn = submitPost }
         </div>
 
         {error && (
-          <div style={styles.errorContainer}>
+          <div style={styles.errorContainer} role="alert">
             <span style={styles.errorIcon}>⚠️</span>
             <span style={styles.errorText}>{error}</span>
           </div>
@@ -307,21 +316,21 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: "var(--spacing-sm)",
   },
   viewPostLink: {
-    padding: "var(--spacing-sm) var(--spacing-md)",
+    padding: "var(--spacing-xs) var(--spacing-sm)",
+    borderRadius: "6px",
     background: "var(--color-primary)",
     color: "white",
-    borderRadius: "8px",
-    fontSize: "0.85rem",
+    fontSize: "0.8rem",
     fontWeight: 600,
     textDecoration: "none",
   },
   createAnotherBtn: {
-    padding: "var(--spacing-sm) var(--spacing-md)",
-    background: "transparent",
+    padding: "var(--spacing-xs) var(--spacing-sm)",
+    borderRadius: "6px",
     border: "1px solid var(--color-border)",
-    borderRadius: "8px",
+    background: "transparent",
     color: "var(--color-text)",
-    fontSize: "0.85rem",
+    fontSize: "0.8rem",
     fontWeight: 600,
     cursor: "pointer",
   },
