@@ -9027,3 +9027,74 @@ fn test_pool_withdraw_valid_amount_reduces_balance() {
         "valid withdrawal must reduce pool balance by the withdrawn amount"
     );
 }
+
+// ── Issue #627: Test rent renewal across ledger advancement ──
+
+#[test]
+fn test_rent_renewal_across_ledger_advancement_and_balance_changes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin, treasury) = setup_contract(&env);
+
+    // Set rent rate in basis points (100 bps)
+    client.set_rent_rate_bps(&admin, &100);
+
+    let user = Address::generate(&env);
+    let token = setup_token(&env, &user);
+
+    client.set_profile(&user, &String::from_str(&env, "alice"), &token);
+
+    let token_client = TokenClient::new(&env, &token);
+
+    let first_payment = 1_000_000_000i128;
+    let second_payment = 2_000_000_000i128;
+
+    // Mint tokens for both payments
+    StellarAssetClient::new(&env, &token).mint(&user, &(first_payment + second_payment));
+
+    // Initial balances
+    let user_balance_0 = token_client.balance(&user);
+    let treasury_balance_0 = token_client.balance(&treasury);
+
+    // Initial ledger sequence
+    let initial_ledger = env.ledger().sequence();
+
+    // ── First Payment (New Payment) ──
+    client.pay_rent(&user, &token, &first_payment);
+
+    let user_balance_1 = token_client.balance(&user);
+    let treasury_balance_1 = token_client.balance(&treasury);
+
+    // Acceptance criterion: Check token balance changes for first payment
+    assert_eq!(user_balance_1, user_balance_0 - first_payment);
+    assert_eq!(treasury_balance_1, treasury_balance_0 + first_payment);
+
+    // Acceptance criterion: Reported expiries follow documented renewal formula (ledger sequence + LEDGER_BUMP)
+    let first_expiry = client.get_rent_expiry(&user);
+    assert_eq!(first_expiry, initial_ledger.saturating_add(LEDGER_BUMP));
+
+    // ── Advance the ledger before second payment ──
+    let ledgers_advanced = 50_000u32;
+    env.ledger().with_mut(|li| {
+        li.sequence_number += ledgers_advanced;
+    });
+    let advanced_ledger = env.ledger().sequence();
+    assert_eq!(advanced_ledger, initial_ledger + ledgers_advanced);
+
+    // ── Second Payment (Renewal) ──
+    client.pay_rent(&user, &token, &second_payment);
+
+    let user_balance_2 = token_client.balance(&user);
+    let treasury_balance_2 = token_client.balance(&treasury);
+
+    // Acceptance criterion: Check token balance changes for second payment
+    assert_eq!(user_balance_2, user_balance_1 - second_payment);
+    assert_eq!(treasury_balance_2, treasury_balance_1 + second_payment);
+
+    // Acceptance criterion: Reported expiries follow documented renewal formula after ledger advance
+    let renewed_expiry = client.get_rent_expiry(&user);
+    assert_eq!(renewed_expiry, advanced_ledger.saturating_add(LEDGER_BUMP));
+    assert!(renewed_expiry > first_expiry);
+}
+
