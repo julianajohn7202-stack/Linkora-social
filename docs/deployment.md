@@ -24,7 +24,7 @@ This guide covers production deployment of the three Linkora backend services:
 7. [Scaling Guidelines](#7-scaling-guidelines)
 8. [Monitoring and Alerting](#8-monitoring-and-alerting)
 9. [Backup and Recovery](#9-backup-and-recovery)
-10. [Notification Service](#10-notification-service-servicessnotification)
+10. [Notification Service](#10-notification-service-servicesnotification)
 11. [Search Service](#11-search-service-servicessearch)
 
 ---
