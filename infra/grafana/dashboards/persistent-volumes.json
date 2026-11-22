@@ -1,0 +1,188 @@
+{
+  "id": null,
+  "uid": "linkora-persistent-volumes",
+  "title": "Linkora — Persistent Volume Capacity & Growth",
+  "description": "Storage capacity, available space, and growth observations for staging and production persistent volumes.",
+  "tags": ["linkora", "storage", "volumes", "staging"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Environment",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "linkora-prometheus" },
+        "query": "label_values(storage_volume_capacity_bytes, env)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": { "text": "staging", "value": "staging" }
+      },
+      {
+        "name": "volume",
+        "label": "Volume",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "linkora-prometheus" },
+        "query": "label_values(storage_volume_capacity_bytes{env=~\"$env\"}, volume)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Monitored Volume Total Capacity",
+      "description": "Total configured capacity per persistent volume.",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "linkora-prometheus" },
+      "targets": [
+        {
+          "expr": "storage_volume_capacity_bytes{env=~\"$env\", volume=~\"$volume\"}",
+          "legendFormat": "{{env}} — {{volume}} ({{mount}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Available Storage Space (%)",
+      "description": "Current percentage of available capacity. Alert triggers below 15%.",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "linkora-prometheus" },
+      "targets": [
+        {
+          "expr": "100 * (storage_volume_available_bytes{env=~\"$env\", volume=~\"$volume\"} / clamp_min(storage_volume_capacity_bytes{env=~\"$env\", volume=~\"$volume\"}, 1))",
+          "legendFormat": "{{volume}} ({{env}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "green", "value": 15 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Current Available Capacity (Bytes)",
+      "description": "Available capacity in bytes for each monitored volume.",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "linkora-prometheus" },
+      "targets": [
+        {
+          "expr": "storage_volume_available_bytes{env=~\"$env\", volume=~\"$volume\"}",
+          "legendFormat": "{{volume}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Persistent Volume Available Space Over Time",
+      "description": "Available capacity tracking over time to observe volume consumption.",
+      "gridPos": { "x": 0, "y": 6, "w": 12, "h": 9 },
+      "datasource": { "type": "prometheus", "uid": "linkora-prometheus" },
+      "targets": [
+        {
+          "expr": "storage_volume_available_bytes{env=~\"$env\", volume=~\"$volume\"}",
+          "legendFormat": "{{env}} — {{volume}} available",
+          "refId": "A"
+        },
+        {
+          "expr": "storage_volume_capacity_bytes{env=~\"$env\", volume=~\"$volume\"}",
+          "legendFormat": "{{env}} — {{volume}} capacity",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Storage Growth Rate (bytes/hour)",
+      "description": "Rate of change of storage consumption. Positive values indicate growth.",
+      "gridPos": { "x": 12, "y": 6, "w": 12, "h": 9 },
+      "datasource": { "type": "prometheus", "uid": "linkora-prometheus" },
+      "targets": [
+        {
+          "expr": "-(deriv(storage_volume_available_bytes{env=~\"$env\", volume=~\"$volume\"}[1h])) * 3600",
+          "legendFormat": "{{volume}} growth/hr",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 15 }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
+    }
+  ]
+}
