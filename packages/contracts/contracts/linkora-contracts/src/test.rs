@@ -9027,3 +9027,66 @@ fn test_pool_withdraw_valid_amount_reduces_balance() {
         "valid withdrawal must reduce pool balance by the withdrawn amount"
     );
 }
+
+// ── Issue #629: Verify fee and rent configuration getter round-trips ──
+
+#[test]
+fn test_fee_and_rent_configuration_getter_roundtrips_and_independence() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin, _) = setup_contract(&env);
+
+    // Initial defaults:
+    // fee_bps defaults to 0 (configured during initialize)
+    // rent_rate_bps defaults to 100 bps
+    assert_eq!(client.get_fee_bps(), 0);
+    assert_eq!(client.get_rent_rate_bps(), 100);
+
+    // Documented supported test values for basis points:
+    // Protocol fee supports 0..=10,000 bps
+    // Rent rate supports 1..=10,000 bps
+    let fee_values: &[u32] = &[50, 250, 500, 1_000, 2_500, 10_000];
+    let rent_values: &[u32] = &[1, 150, 300, 1_000, 5_000, 10_000];
+
+    // Local administrator fixture:
+    // Use an administrator granted the Admin role to update settings
+    let local_admin = Address::generate(&env);
+    client.grant_role(&admin, &local_admin, &Role::Admin);
+    assert!(client.has_role(&local_admin, &Role::Admin));
+
+    for (&new_fee, &new_rent) in fee_values.iter().zip(rent_values.iter()) {
+        let rent_before = client.get_rent_rate_bps();
+
+        // 1. Update protocol fee
+        client.set_fee(&local_admin, &new_fee);
+
+        // Acceptance criterion: Each read returns the most recent value for its own setting.
+        assert_eq!(client.get_fee_bps(), new_fee);
+
+        // Acceptance criterion: The fixture verifies the two settings update independently.
+        // Rent setting must not change when fee setting updates.
+        assert_eq!(
+            client.get_rent_rate_bps(),
+            rent_before,
+            "updating fee_bps must not alter rent_rate_bps"
+        );
+
+        let fee_before = client.get_fee_bps();
+
+        // 2. Update rent rate
+        client.set_rent_rate_bps(&local_admin, &new_rent);
+
+        // Acceptance criterion: Each read returns the most recent value for its own setting.
+        assert_eq!(client.get_rent_rate_bps(), new_rent);
+
+        // Acceptance criterion: The fixture verifies the two settings update independently.
+        // Fee setting must not change when rent setting updates.
+        assert_eq!(
+            client.get_fee_bps(),
+            fee_before,
+            "updating rent_rate_bps must not alter fee_bps"
+        );
+    }
+}
+
