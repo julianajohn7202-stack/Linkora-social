@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useWalletContext } from "@/components/WalletProvider";
 import { LinkoraClient, GovParameter, GovProposal, GovStatus } from "linkora-sdk";
 import { Address, nativeToScVal } from "@stellar/stellar-sdk";
@@ -251,7 +252,12 @@ export default function GovernancePage() {
                     <div className="flex justify-between items-start mb-4">
                       <div>
                         <h3 className="text-lg font-bold text-[var(--foreground)]">
-                          Proposal #{p.id.toString()}: Update {p.parameter}
+                          <Link
+                            href={`/governance/${p.id.toString()}`}
+                            className="hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                          >
+                            Proposal #{p.id.toString()}: Update {p.parameter}
+                          </Link>
                         </h3>
                         <p className="text-sm text-[var(--text-muted)] font-mono mt-1">
                           Proposer: {p.proposer.slice(0, 6)}…{p.proposer.slice(-4)}
