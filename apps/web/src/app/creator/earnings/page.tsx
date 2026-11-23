@@ -122,6 +122,7 @@ export default function CreatorEarningsPage() {
         {state.status === "empty" && (
           <div
             className="bg-[var(--bg-secondary)] rounded-2xl border border-[var(--bg-tertiary)]"
+            aria-label="No earnings yet"
             data-testid="earnings-empty-container"
           >
             <EarningsEmptyState />
@@ -164,6 +165,22 @@ function EarningsDashboard({ data }: { data: AnalyticsData }) {
 
   const totalXlm = summary.totalTipsXlm;
   const tippedPosts = tipEarnings.filter((p) => p.earnings > 0).length;
+
+  // Compute highest and lowest earning day for the accessible summary
+  const nonZeroPoints = tipEarnings.filter((p) => p.earnings > 0);
+  const maxPoint = nonZeroPoints.length
+    ? nonZeroPoints.reduce((a, b) => (b.earnings > a.earnings ? b : a))
+    : null;
+  const minPoint = nonZeroPoints.length
+    ? nonZeroPoints.reduce((a, b) => (b.earnings < a.earnings ? b : a))
+    : null;
+  const allZero = nonZeroPoints.length === 0;
+
+  const accessibleSummary = allZero
+    ? "No tips received in this period."
+    : maxPoint && minPoint
+      ? `Showing 30 days. Highest single-day earnings: ${maxPoint.date} at ${formatStroops(String(maxPoint.earnings))} XLM. Lowest: ${minPoint.date} at ${formatStroops(String(minPoint.earnings))} XLM.`
+      : "";
 
   const exportCsv = useCallback(() => {
     const escapeCsv = (value: string) => `"${value.replaceAll('"', '""')}"`;
@@ -217,6 +234,13 @@ function EarningsDashboard({ data }: { data: AnalyticsData }) {
         />
       </div>
 
+      {/* Accessible plain-text summary for keyboard/screen-reader users */}
+      {accessibleSummary && (
+        <section aria-label="Earnings summary" className="sr-only">
+          <p>{accessibleSummary}</p>
+        </section>
+      )}
+
       {/* Tip earnings timeline */}
       <section
         className="bg-[var(--bg-secondary)] rounded-2xl border border-[var(--bg-tertiary)] p-6"
@@ -230,21 +254,34 @@ function EarningsDashboard({ data }: { data: AnalyticsData }) {
         </p>
 
         {tipEarnings.length === 0 ? (
-          <p className="text-[var(--text-muted)] text-sm py-6 text-center">
+          <p
+            role="status"
+            className="text-[var(--text-muted)] text-sm py-6 text-center"
+          >
             No data for this period.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
+              <caption className="sr-only">Daily tip earnings for the last 30 days</caption>
               <thead>
                 <tr className="border-b border-[var(--bg-tertiary)]">
-                  <th className="text-left py-2 px-3 text-[var(--text-muted)] font-medium">
+                  <th
+                    scope="col"
+                    className="text-left py-2 px-3 text-[var(--text-muted)] font-medium"
+                  >
                     Date
                   </th>
-                  <th className="text-right py-2 px-3 text-[var(--text-muted)] font-medium">
+                  <th
+                    scope="col"
+                    className="text-right py-2 px-3 text-[var(--text-muted)] font-medium"
+                  >
                     Tips (stroops)
                   </th>
-                  <th className="text-right py-2 px-3 text-[var(--text-muted)] font-medium">
+                  <th
+                    scope="col"
+                    className="text-right py-2 px-3 text-[var(--text-muted)] font-medium"
+                  >
                     XLM
                   </th>
                 </tr>
@@ -257,10 +294,17 @@ function EarningsDashboard({ data }: { data: AnalyticsData }) {
                   >
                     <td className="py-2 px-3 text-[var(--text-primary)]">{point.date}</td>
                     <td className="py-2 px-3 text-right text-[var(--text-primary)]">
-                      {point.earnings.toLocaleString()}
+                      {point.earnings === 0 ? "—" : point.earnings.toLocaleString()}
                     </td>
-                    <td className="py-2 px-3 text-right font-semibold text-[var(--accent-teal)]">
-                      {formatStroops(String(point.earnings))}
+                    <td
+                      className="py-2 px-3 text-right font-semibold text-[var(--accent-teal)]"
+                      aria-label={
+                        point.earnings === 0
+                          ? "No earnings"
+                          : `${formatStroops(String(point.earnings))} XLM`
+                      }
+                    >
+                      {point.earnings === 0 ? "—" : formatStroops(String(point.earnings))}
                     </td>
                   </tr>
                 ))}
