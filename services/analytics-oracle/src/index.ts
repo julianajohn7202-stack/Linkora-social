@@ -254,12 +254,16 @@ app.get("/analytics/funnels/:name", async (req, res, next) => {
 const creatorParamsSchema = z.object({
   creator: z.string().regex(/^G[A-Z2-7]{55}$/, "Invalid Stellar address format"),
 });
-const analyticsPeriodSchema = z.enum(["1d", "7d", "30d", "90d"]);
+const analyticsPeriodSchema = z.enum(["1d", "7d", "30d", "90d", "all"]);
 const periodDays: Record<z.infer<typeof analyticsPeriodSchema>, number> = {
   "1d": 1,
   "7d": 7,
   "30d": 30,
   "90d": 90,
+  // 100 years: an effectively unbounded lookback for the dashboard's
+  // "all-time" range. The query still filters by timestamp, so this only
+  // widens the window rather than disabling the bound.
+  all: 36_500,
 };
 
 function getAnalyticsWindow(periodValue: unknown) {
@@ -277,7 +281,7 @@ function getAnalyticsWindow(periodValue: unknown) {
 app.get("/metrics/creators/:creator", validateParams(creatorParamsSchema), async (req, res) => {
   const window = getAnalyticsWindow(req.query.period);
   if (!window) {
-    res.status(400).json({ error: "period must be 1d, 7d, 30d, or 90d" });
+    res.status(400).json({ error: "period must be 1d, 7d, 30d, 90d, or all" });
     return;
   }
   const creator = await fetchCreatorMetrics(db, req.params.creator, window.windowStart);
@@ -288,6 +292,7 @@ app.get("/metrics/creators/:creator", validateParams(creatorParamsSchema), async
     windowEnd: window.windowEnd.toISOString(),
     totalTips: creator.totalTips.toString(),
     postCount: creator.postCount.toString(),
+    followerCount: creator.followerCount.toString(),
     followerDelta: creator.followerDelta.toString(),
     uniqueTippers: creator.uniqueTippers,
   });
@@ -296,7 +301,7 @@ app.get("/metrics/creators/:creator", validateParams(creatorParamsSchema), async
 app.get("/metrics/platform", async (req, res) => {
   const window = getAnalyticsWindow(req.query.period);
   if (!window) {
-    res.status(400).json({ error: "period must be 1d, 7d, 30d, or 90d" });
+    res.status(400).json({ error: "period must be 1d, 7d, 30d, 90d, or all" });
     return;
   }
   const stats = await fetchPlatformStats(db, window.windowStart);

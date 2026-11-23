@@ -110,6 +110,56 @@ export async function fetchPosts(address: string): Promise<IndexerPost[]> {
   return allPosts;
 }
 
+export type CreatorDateRange = "7d" | "30d" | "all";
+
+export interface CreatorDashboardSummary {
+  /** Total tips received in the window, formatted as XLM. */
+  tipsReceived: string;
+  postCount: number;
+  followerCount: number;
+  /**
+   * Tips that have not been claimed yet, formatted as XLM.
+   *
+   * The analytics-oracle exposes tips accrued in the window but there is no
+   * separate claim ledger, so the unclaimed balance is the window's tip total.
+   */
+  pendingRewards: string;
+}
+
+/**
+ * Fetch the four stat-card values for a creator from the analytics-oracle.
+ *
+ * The oracle owns the tip/post/follower aggregates; keeping this mapping here
+ * (rather than in the component) keeps `CreatorDashboard` presentational and
+ * makes the API shape easy to mock in tests.
+ */
+export async function fetchCreatorDashboardSummary(
+  address: string,
+  range: CreatorDateRange
+): Promise<CreatorDashboardSummary> {
+  const res = await fetch(
+    `${ORACLE_URL}/metrics/creators/${encodeURIComponent(address)}?period=${range}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    throw new Error(`Analytics request failed with HTTP ${res.status}`);
+  }
+
+  const data = (await res.json()) as {
+    totalTips?: string;
+    postCount?: string;
+    followerCount?: string;
+  };
+
+  const tipsReceived = formatStroops(data.totalTips ?? "0");
+  return {
+    tipsReceived,
+    postCount: Number(data.postCount ?? 0),
+    followerCount: Number(data.followerCount ?? 0),
+    pendingRewards: tipsReceived,
+  };
+}
+
 export async function fetchAttestation(address: string): Promise<AnalyticsAttestation | null> {
   try {
     const res = await fetch(`${ORACLE_URL}/attestations/${address}`);

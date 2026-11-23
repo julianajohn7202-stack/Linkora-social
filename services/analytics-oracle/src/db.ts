@@ -20,6 +20,8 @@ export interface CreatorMetrics {
   creatorAddress: string;
   totalTips: bigint;
   postCount: bigint;
+  /** Current total followers (not just the window delta). */
+  followerCount: bigint;
   followerDelta: bigint;
   uniqueTippers: number;
 }
@@ -133,10 +135,7 @@ export async function fetchCreatorStats(
 }
 
 /** Aggregate platform-wide totals for an inclusive time window. */
-export async function fetchPlatformStats(
-  db: Pool,
-  windowStart: Date
-): Promise<PlatformStats> {
+export async function fetchPlatformStats(db: Pool, windowStart: Date): Promise<PlatformStats> {
   const windowStartEpoch = Math.floor(windowStart.getTime() / 1000);
   const result = await db.query<{
     total_tips: string;
@@ -180,6 +179,7 @@ export async function fetchCreatorMetrics(
   const result = await db.query<{
     total_tips: string;
     post_count: string;
+    follower_count: string;
     follower_delta: string;
     unique_tippers: string;
   }>(
@@ -190,6 +190,8 @@ export async function fetchCreatorMetrics(
         WHERE p.author = $1 AND t.created_at >= $2) AS total_tips,
       (SELECT COUNT(*)::text FROM posts
         WHERE author = $1 AND created_at >= $2) AS post_count,
+      (SELECT COUNT(*)::text FROM follows
+        WHERE followee = $1) AS follower_count,
       (SELECT COUNT(*)::text FROM follows
         WHERE followee = $1 AND created_at >= $3) AS follower_delta,
       (SELECT COUNT(DISTINCT t.tipper)::text
@@ -203,6 +205,7 @@ export async function fetchCreatorMetrics(
     creatorAddress,
     totalTips: BigInt(row?.total_tips ?? "0"),
     postCount: BigInt(row?.post_count ?? "0"),
+    followerCount: BigInt(row?.follower_count ?? "0"),
     followerDelta: BigInt(row?.follower_delta ?? "0"),
     uniqueTippers: Number(row?.unique_tippers ?? 0),
   };

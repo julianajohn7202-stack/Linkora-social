@@ -1,7 +1,7 @@
 import { NetworkError, ValidationError } from "./errors.js";
 import { fetchWithTimeout } from "./utils/fetch.js";
 
-export type AnalyticsPeriod = "1d" | "7d" | "30d" | "90d";
+export type AnalyticsPeriod = "1d" | "7d" | "30d" | "90d" | "all";
 
 export interface CreatorMetrics {
   creatorAddress: string;
@@ -10,6 +10,8 @@ export interface CreatorMetrics {
   windowEnd: string;
   totalTips: string;
   postCount: string;
+  /** Current total followers, not just the window delta. */
+  followerCount: string;
   followerDelta: string;
   uniqueTippers: number;
 }
@@ -43,7 +45,10 @@ export class AnalyticsClient {
     this.timeoutMs = config.timeoutMs ?? 30_000;
   }
 
-  async getCreatorMetrics(address: string, period: AnalyticsPeriod = "7d"): Promise<CreatorMetrics> {
+  async getCreatorMetrics(
+    address: string,
+    period: AnalyticsPeriod = "7d"
+  ): Promise<CreatorMetrics> {
     this.validateAddress(address);
     return this.getCached(
       `creator:${address}:${period}`,
@@ -86,4 +91,3 @@ export class AnalyticsClient {
     }
   }
 }
-
