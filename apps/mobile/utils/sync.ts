@@ -24,13 +24,16 @@ function shortAddress(address: string): string {
  * Falls back to placeholder content/username when the indexer doesn't provide them
  * and the post isn't already cached.
  */
-export async function fetchAndCachePosts(limit: number, offset: number): Promise<Post[]> {
+export async function fetchAndCachePosts(
+  limit: number,
+  cursor: number,
+  isCurrent: () => boolean = () => true
+): Promise<Post[]> {
   const indexerUrl = process.env.EXPO_PUBLIC_INDEXER_URL || "http://localhost:3001";
 
   // 1. Fetch posts from the indexer
-  const res = await fetch(
-    `${indexerUrl.replace(/\/$/, "")}/api/posts?limit=${limit}&offset=${offset}`
-  );
+  const query = cursor === 0 ? `limit=${limit}` : `limit=${limit}&cursor=${cursor}`;
+  const res = await fetch(`${indexerUrl.replace(/\/$/, "")}/api/posts?${query}`);
   if (!res.ok) {
     throw new Error("Failed to fetch posts from indexer");
   }
@@ -68,13 +71,18 @@ export async function fetchAndCachePosts(limit: number, offset: number): Promise
   }
 
   // 3. Reconcile with SQLite cache
-  await reconcilePosts(finalPosts);
+  if (isCurrent()) {
+    await reconcilePosts(finalPosts, { replace: cursor === 0 });
+  }
 
   return finalPosts;
 }
 
 interface WalletKitLike {
-  signAndSubmitTransaction(payload: { txXdr: string; rpcUrl?: string }): Promise<{ hash?: string; txHash?: string }>;
+  signAndSubmitTransaction(payload: {
+    txXdr: string;
+    rpcUrl?: string;
+  }): Promise<{ hash?: string; txHash?: string }>;
 }
 
 export interface SyncPendingPostsOptions {
@@ -119,7 +127,7 @@ async function findPostByAuthorAndContent(
     }
     const data = await res.json();
     const posts = data.posts || [];
-    
+
     // Find the post with matching content
     for (const post of posts) {
       if (post.content === content) {
@@ -157,7 +165,7 @@ async function submitAndConfirmPost(
   // Sign and submit via wallet
   const submitResult = await walletKit.signAndSubmitTransaction({ txXdr, rpcUrl });
   const txHash = submitResult.hash || submitResult.txHash;
-  
+
   if (!txHash) {
     throw new Error("Wallet did not return transaction hash");
   }
@@ -169,7 +177,7 @@ async function submitAndConfirmPost(
     if (postId) {
       return postId;
     }
-    
+
     // Wait before next attempt with exponential backoff
     if (attempt < MAX_RETRIES - 1) {
       const delay = computeBackoff(attempt);
@@ -187,7 +195,13 @@ async function submitAndConfirmPost(
  * when the post is actually indexed.
  */
 export async function syncPendingPosts(options: SyncPendingPostsOptions): Promise<void> {
-  const { walletKit, contractId, rpcUrl, networkPassphrase, indexerUrl = DEFAULT_INDEXER_URL } = options;
+  const {
+    walletKit,
+    contractId,
+    rpcUrl,
+    networkPassphrase,
+    indexerUrl = DEFAULT_INDEXER_URL,
+  } = options;
   const pending = await getPendingPosts();
   if (pending.length === 0) return;
 

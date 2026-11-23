@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Post } from "../components/PostCard";
 import { initDatabase, getCachedPosts, evictStaleCache } from "../utils/db";
-import { fetchAndCachePosts, syncPendingPosts } from "../utils/sync";
+import { fetchAndCachePosts } from "../utils/sync";
 
 const PAGE_SIZE = 10;
 
@@ -38,6 +38,8 @@ export function markFeedPostDeleted(postId: string | number): void {
 export interface UseFeedReturn {
   posts: Post[];
   loading: boolean;
+  refreshing: boolean;
+  loadingMore: boolean;
   error: string | null;
   hasMore: boolean;
   loadMore: () => void;
@@ -46,118 +48,125 @@ export interface UseFeedReturn {
 
 export function useFeed(): UseFeedReturn {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [activity, setActivity] = useState<"refresh" | "page" | null>("refresh");
   const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
 
-  const offsetRef = useRef(0);
-  const loadingRef = useRef(false);
-  const loadedPostsRef = useRef(0);
+  const generation = useRef(0);
+  const running = useRef(false);
+  const mounted = useRef(false);
+  const initialized = useRef(false);
+  const cursor = useRef<number | null>(null);
+  const visibleLimit = useRef(PAGE_SIZE);
 
-  // Load posts from SQLite cache
-  const loadFromCache = useCallback(async (limit: number, replace: boolean) => {
-    try {
-      const offset = replace ? 0 : offsetRef.current;
-      const cached = await getCachedPosts(limit, offset);
-
-      setPosts((prev) => {
-        const next = replace ? cached : [...prev, ...cached];
-        offsetRef.current = next.length;
-        loadedPostsRef.current = next.length;
-        return next;
-      });
-      setHasMore(cached.length >= limit);
-    } catch (err) {
-      console.warn("Failed to load posts from SQLite cache:", err);
+  const syncWithNetwork = useCallback(async (refresh: boolean) => {
+    if (refresh) generation.current++;
+    if (running.current) {
+      if (refresh) {
+        setActivity("refresh");
+        setError(null);
+      }
+      return;
     }
+
+    running.current = true;
+    const startingGeneration = generation.current;
+    let completedGeneration: number;
+    do {
+      const requestGeneration = generation.current;
+      completedGeneration = requestGeneration;
+      const replace = refresh || requestGeneration !== startingGeneration;
+      const isCurrent = () => mounted.current && generation.current === requestGeneration;
+      setActivity(replace ? "refresh" : "page");
+      setError(null);
+      try {
+        if (!initialized.current) {
+          await initDatabase();
+          const cached = await getCachedPosts(PAGE_SIZE, 0);
+          if (!isCurrent()) continue;
+          initialized.current = true;
+          setPosts(cached);
+        }
+
+        const page = await fetchAndCachePosts(
+          PAGE_SIZE,
+          replace ? 0 : (cursor.current ?? 0),
+          isCurrent
+        );
+        if (!isCurrent()) continue;
+        if (replace) await evictStaleCache();
+
+        const limit = replace ? PAGE_SIZE : visibleLimit.current + PAGE_SIZE;
+        const cached = await getCachedPosts(limit, 0);
+        if (!isCurrent()) continue;
+        const nextCursor = page.length === PAGE_SIZE ? page[page.length - 1].timestamp : null;
+        cursor.current = nextCursor;
+        visibleLimit.current = limit;
+        setPosts(cached);
+        setHasMore(nextCursor !== null);
+      } catch (err) {
+        if (isCurrent()) {
+          console.warn("Network sync failed, displaying cached data:", err);
+          setError("Offline mode. Serving cached posts.");
+        }
+      }
+    } while (mounted.current && completedGeneration !== generation.current);
+
+    running.current = false;
+    if (mounted.current) setActivity(null);
   }, []);
 
-  // Fetch from network, reconcile, and reload cache
-  const syncWithNetwork = useCallback(
-    async (replace: boolean) => {
-      if (loadingRef.current) return;
-      loadingRef.current = true;
-      setLoading(true);
-      setError(null);
+  useEffect(() => {
+    mounted.current = true;
+    void syncWithNetwork(true);
+    return () => {
+      mounted.current = false;
+      generation.current++;
+    };
+  }, [syncWithNetwork]);
 
-      try {
-        // 1. Initialize DB if not done
-        await initDatabase();
-
-        // 2. Fetch remote page and upsert to SQLite
-        const offset = replace ? 0 : offsetRef.current;
-        await fetchAndCachePosts(PAGE_SIZE, offset);
-
-        // 3. Evict stale rows periodically on initial refresh
-        if (replace) {
-          await evictStaleCache();
-        }
-
-        // 4. Reload from SQLite (the entire loaded list so far, to refresh all visible posts)
-        const currentLoadedCount = replace ? PAGE_SIZE : loadedPostsRef.current + PAGE_SIZE;
-        const cached = await getCachedPosts(currentLoadedCount, 0);
-        setPosts(cached);
-        offsetRef.current = cached.length;
-        loadedPostsRef.current = cached.length;
-        setHasMore(cached.length >= currentLoadedCount);
-
-        // 5. Fire background sync for pending posts
-        void syncPendingPosts().then(() => {
-          notifyFeedUpdate();
-        });
-      } catch (err) {
-        console.warn("Network sync failed, displaying cached data:", err);
-        // Fallback: just load from cache if we haven't already
-        if (loadedPostsRef.current === 0) {
-          await loadFromCache(PAGE_SIZE, true);
-        }
-        setError("Offline mode. Serving cached posts.");
-      } finally {
-        setLoading(false);
-        loadingRef.current = false;
-      }
-    },
-    [loadFromCache]
-  );
-
-  // Initial load
   useEffect(() => {
     let active = true;
-    async function init() {
-      await initDatabase();
-      if (!active) return;
-      // Load cache instantly
-      await loadFromCache(PAGE_SIZE, true);
-      setLoading(false);
-      // Trigger network sync in background
-      void syncWithNetwork(true);
-    }
-    init();
+    const unsubscribe = subscribeToFeedUpdates(async () => {
+      if (!initialized.current || running.current) return;
+      const currentGeneration = generation.current;
+      const currentCursor = cursor.current;
+      try {
+        const cached = await getCachedPosts(visibleLimit.current, 0);
+        if (
+          active &&
+          !running.current &&
+          generation.current === currentGeneration &&
+          cursor.current === currentCursor
+        ) {
+          setPosts(cached);
+        }
+      } catch (err) {
+        console.warn("Failed to load posts from SQLite cache:", err);
+      }
+    });
     return () => {
       active = false;
+      unsubscribe();
     };
-  }, [loadFromCache, syncWithNetwork]);
-
-  // Subscribe to feed updates (e.g. from optimistic creation or sync confirmation)
-  useEffect(() => {
-    return subscribeToFeedUpdates(async () => {
-      const limit = Math.max(PAGE_SIZE, posts.length);
-      const cached = await getCachedPosts(limit, 0);
-      setPosts(cached);
-      offsetRef.current = cached.length;
-      loadedPostsRef.current = cached.length;
-    });
-  }, [posts.length]);
+  }, []);
 
   const loadMore = useCallback(() => {
-    if (!loadingRef.current && hasMore) {
-      void syncWithNetwork(false);
-    }
-  }, [hasMore, syncWithNetwork]);
+    if (!running.current && cursor.current !== null) void syncWithNetwork(false);
+  }, [syncWithNetwork]);
 
   const refresh = useCallback(() => {
     void syncWithNetwork(true);
   }, [syncWithNetwork]);
 
-  return { posts, loading, error, hasMore, loadMore, refresh };
+  return {
+    posts,
+    loading: activity !== null,
+    refreshing: activity === "refresh",
+    loadingMore: activity === "page",
+    error,
+    hasMore,
+    loadMore,
+    refresh,
+  };
 }
