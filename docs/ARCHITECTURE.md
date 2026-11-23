@@ -38,6 +38,8 @@ This document describes the major components of the Linkora platform and how the
 
 ## 2. Component breakdown
 
+See the [creator analytics metric definitions](CREATOR_ANALYTICS.md) for data sources, window boundaries and aggregation rules.
+
 | Component        | Path                        | Role                                                                              |
 | ---------------- | --------------------------- | --------------------------------------------------------------------------------- |
 | Smart contract   | `packages/contracts`        | On-chain state: profiles, posts, tips, pools, governance, moderation              |
