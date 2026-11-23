@@ -253,9 +253,21 @@ logs token acquisition errors, including missing project setup.
 ### Install and configure the build
 
 From the repository root, install the workspace dependencies with
-`pnpm install --frozen-lockfile`. In the shell that starts Expo, set the
-following placeholders to your Testnet configuration. Use the indexer's
-device-reachable URL because `localhost` on a phone refers to the phone.
+`pnpm install --frozen-lockfile`. In your local verification checkout, replace
+the `env` and `projectId` declarations in
+[`createWalletConnectAdapter`](../../apps/mobile/context/WalletContext.tsx)
+with the following declaration for the device build. Expo inlines public
+variables referenced directly through `process.env`, and the checked-in adapter
+looks up the project ID indirectly. Keep this temporary edit local and record
+it with your device results. [Expo environment variables](https://docs.expo.dev/guides/environment-variables/#how-to-read-from-environment-variables)
+
+```ts
+const projectId = process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID;
+```
+
+In the shell that starts Expo, replace both placeholders with your Testnet
+configuration. Use the indexer's device-reachable URL because `localhost`
+on a phone refers to the phone.
 
 ```bash
 export EXPO_PUBLIC_INDEXER_URL='https://YOUR-TEST-INDEXER.example'
@@ -269,14 +281,10 @@ pnpm --filter @linkora/mobile android --device
 ```
 
 The commands build and install the app and start Metro. For a later session,
-start Metro with `pnpm --filter @linkora/mobile dev` and open the installed app.
-Use a device that can reach Metro from the chosen host connection. Confirm the
-app opens to its tabs and select Testnet in Settings. If Connect Wallet reports
-a missing project ID after the placeholder is replaced, record it as a blocked
-handoff and capture the error. The current
-[wallet adapter](../../apps/mobile/context/WalletContext.tsx) reads the ID
-through `globalThis.process?.env`; verify it is available in the device
-bundle.
+start Metro with `pnpm --filter @linkora/mobile dev` using the same environment
+and open the installed app. Use a device that can reach Metro from the chosen
+host connection. Confirm the app opens to its tabs and select Testnet in
+Settings.
 
 ### Verify wallet handoff and permissions
 
