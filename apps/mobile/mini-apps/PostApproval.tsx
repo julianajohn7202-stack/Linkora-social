@@ -1,7 +1,5 @@
 import React, { useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -10,36 +8,17 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-
-import { resolvePendingRequest } from "../../mini-apps/bridge";
-
-export default function CreatePostScreen() {
-  const { requestId } = useLocalSearchParams<{ requestId: string }>();
-  const router = useRouter();
-  const [content, setContent] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  const handleSubmit = async () => {
-    const trimmed = content.trim();
-    if (!trimmed) {
-      Alert.alert("Empty post", "Write something before posting.");
-      return;
-    }
-
-    setSubmitting(true);
-
-    const postId = `post_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-
-    // Simulate brief network delay
-    await new Promise((r) => setTimeout(r, 300));
-
-    if (requestId) {
-      resolvePendingRequest(requestId, { postId, content: trimmed });
-    }
-
-    router.back();
-  };
+export function PostApproval({
+  initialContent,
+  onConfirm,
+  onDismiss,
+}: {
+  initialContent: string;
+  onConfirm: (content: string) => void;
+  onDismiss: () => void;
+}) {
+  const [content, setContent] = useState(initialContent);
+  const trimmed = content.trim();
 
   return (
     <KeyboardAvoidingView
@@ -57,18 +36,20 @@ export default function CreatePostScreen() {
           multiline
           textAlignVertical="top"
           autoFocus
-          editable={!submitting}
         />
         <TouchableOpacity
-          style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
-          onPress={handleSubmit}
-          disabled={submitting}
+          style={[styles.submitButton, !trimmed && styles.submitButtonDisabled]}
+          onPress={() => onConfirm(trimmed)}
+          disabled={!trimmed}
         >
-          {submitting ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <Text style={styles.submitText}>Post</Text>
-          )}
+          <Text style={styles.submitText}>Post</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={onDismiss}
+          style={styles.cancelButton}
+        >
+          <Text style={styles.submitText}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -110,6 +91,10 @@ const styles = StyleSheet.create({
   },
   submitButtonDisabled: {
     opacity: 0.6,
+  },
+  cancelButton: {
+    padding: 16,
+    alignItems: "center",
   },
   submitText: {
     color: "#ffffff",

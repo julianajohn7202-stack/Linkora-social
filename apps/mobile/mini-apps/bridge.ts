@@ -100,48 +100,28 @@ export interface MiniAppBridgeOptions {
   handlers?: Partial<Record<BridgePermission, BridgeHandler>>;
 }
 
-interface PendingRequest {
-  resolve: (value: unknown) => void;
-  reject: (reason: unknown) => void;
-}
+const SUPPORTED_METHODS = new Set<string>([
+  "wallet.getAddress",
+  "wallet.sign",
+  "wallet.signTransaction",
+  "profile.get",
+  "profile.update",
+  "post.create",
+]);
 
-const pendingRequests = new Map<string, PendingRequest>();
-
-export function registerPendingRequest(requestId: string): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    pendingRequests.set(requestId, { resolve, reject });
-  });
-}
-
-export function resolvePendingRequest(requestId: string, result: unknown): void {
-  const pending = pendingRequests.get(requestId);
-  if (pending) {
-    pending.resolve(result);
-    pendingRequests.delete(requestId);
-  }
-}
-
-export function rejectPendingRequest(requestId: string, error: Error): void {
-  const pending = pendingRequests.get(requestId);
-  if (pending) {
-    pending.reject(error);
-    pendingRequests.delete(requestId);
-  }
+async function requireWalletAddress(): Promise<string> {
+  const address = await getWalletAddress();
+  if (!address) throw new BridgeError("MethodUnavailable", "No wallet is connected");
+  return address;
 }
 
 const DEFAULT_HANDLERS: Partial<Record<BridgePermission, BridgeHandler>> = {
-  "wallet.getAddress": async () => null,
-  "wallet.sign": async (payload) => payload,
-  "wallet.signTransaction": async (payload) => payload,
+  "wallet.getAddress": requireWalletAddress,
   "profile.get": async () => {
-    const address = await getWalletAddress();
-    if (!address) {
-      return null;
-    }
+    const address = await requireWalletAddress();
     const creatorToken = await getItem<string>(StorageKey.AuthToken).catch(() => null);
     return { address, username: null, creatorToken };
   },
-  "profile.update": async (payload) => payload,
 };
 
 const APPROVAL_REQUIRED = new Set<BridgePermission>([
@@ -152,30 +132,88 @@ const APPROVAL_REQUIRED = new Set<BridgePermission>([
 
 export function createMiniAppBridge({
   permissions,
-  requestUserApproval = async () => true,
+  requestUserApproval,
   handlers = {},
 }: MiniAppBridgeOptions) {
   const methodHandlers = { ...DEFAULT_HANDLERS, ...handlers };
 
   return {
     async call(method: string, payload?: unknown) {
-      // Map profile.get to profile.read for permission checking
-      const permMethod = method === "profile.get" ? "profile.read" : method;
-      assertPermission(permissions, permMethod);
-
-      if (APPROVAL_REQUIRED.has(method as BridgePermission)) {
-        const approved = await requestUserApproval(method as BridgePermission);
-        if (!approved) {
-          throw new BridgeError("UserRejected", `User rejected ${method}`);
-        }
+      if (!SUPPORTED_METHODS.has(method)) {
+        throw new BridgeError("UnsupportedMethod", `Unsupported bridge method: ${method}`);
       }
+
+      const permission =
+        method === "profile.get" && permissions.includes("profile.get")
+          ? "profile.get"
+          : method === "profile.get"
+            ? "profile.read"
+            : method;
+      assertPermission(permissions, permission);
 
       const handler = methodHandlers[method as BridgePermission];
       if (!handler) {
         throw new BridgeError("MethodUnavailable", `No handler registered for ${method}`);
       }
 
+      if (APPROVAL_REQUIRED.has(method as BridgePermission)) {
+        if (!requestUserApproval) {
+          throw new BridgeError("MethodUnavailable", `Approval is unavailable for ${method}`);
+        }
+        if (!(await requestUserApproval(method as BridgePermission))) {
+          throw new BridgeError("UserRejected", `User rejected ${method}`);
+        }
+      }
+
       return handler(payload);
+    },
+  };
+}
+
+export interface BridgeRequest {
+  documentId: string;
+  id: number;
+  method: string;
+  payload?: unknown;
+}
+
+type BridgeFailure = { code: BridgeError["code"]; message: string; requestId: number };
+type BridgeResponse = (error: BridgeFailure | null, result?: unknown) => void;
+
+export function createBridgeSession(call: (method: string, payload?: unknown) => Promise<unknown>) {
+  const pending = new Map<string, BridgeResponse>();
+
+  return {
+    async dispatch(request: BridgeRequest, respond: BridgeResponse): Promise<void> {
+      const key = JSON.stringify([request.documentId, request.id]);
+      if (pending.has(key)) return;
+      pending.set(key, respond);
+
+      function finish(error: BridgeFailure | null, result?: unknown) {
+        if (pending.get(key) !== respond) return;
+        pending.delete(key);
+        respond(error, result);
+      }
+
+      try {
+        const result = await call(request.method, request.payload);
+        finish(null, result);
+      } catch (err) {
+        const failure =
+          err instanceof BridgeError
+            ? err
+            : new BridgeError("RequestFailed", `Host request failed: ${request.method}`);
+        finish({ code: failure.code, message: failure.message, requestId: request.id });
+      }
+    },
+
+    close(): void {
+      const requests = [...pending];
+      pending.clear();
+      for (const [key, respond] of requests) {
+        const [, requestId] = JSON.parse(key) as [string, number];
+        respond({ code: "AppClosed", message: "The mini app closed", requestId });
+      }
     },
   };
 }
