@@ -75,6 +75,17 @@ pnpm --filter contracts test      # or: cd packages/contracts && cargo test
 
 ---
 
+## Wallet support by client and network
+
+“Implemented” identifies a code path contributors can exercise. “Unverified”
+marks combinations that need a check with a real wallet, build, or deployment.
+
+| Client and wallet | Connection | Transaction signing | Deep links | Configured networks |
+| --- | --- | --- | --- | --- |
+| Web browser with Freighter | Implemented through the [wallet provider](apps/web/src/components/WalletProvider.tsx). | Implemented through the [Freighter transaction helper](apps/web/src/lib/tx.ts). | [Browser post routes](apps/web/src/app/posts) use web URLs. WalletConnect handoff and custom wallet callbacks are unsupported by the [web provider](apps/web/src/components/WalletProvider.tsx). | [Post composition](apps/web/src/components/PostComposeModal.tsx) defaults to Testnet and reads `NEXT_PUBLIC_SOROBAN_RPC_URL`, `NEXT_PUBLIC_NETWORK_PASSPHRASE`, and `NEXT_PUBLIC_CONTRACT_ID`. The [Horizon map](apps/web/src/config/networks.ts) also includes Mainnet (`PUBLIC`/`MAINNET`) and Futurenet for balance reads. End-to-end signing on those networks is unverified. |
+| Native iOS and Android with WalletConnect | Implemented on the [Connect Wallet screen](apps/mobile/app/connect.tsx) with a project ID and a compatible installed wallet. Real-device pairing is unverified. | The [native adapter](apps/mobile/context/WalletContext.tsx) implements `stellar_signXDR`. End-to-end signing and submission through the [transaction hook](apps/mobile/hooks/useSubmitTx.ts) are unverified. | The [adapter](apps/mobile/context/WalletContext.tsx) opens the wallet pairing URI. Automatic return is unverified. The [app config](apps/mobile/app.json) registers `linkora://` for content, with [post, profile, pool, and DM routes](apps/mobile/utils/deepLinks.ts). iOS HTTPS association is unverified and Android HTTPS app links are unconfigured. | [Mobile presets](apps/mobile/context/NetworkContext.tsx) configure Testnet (default) and Mainnet. Both have placeholder contract IDs and end-to-end contract calls are unverified. Futurenet is unsupported. |
+| Expo app in a browser with Freighter | The [Connect Wallet route](apps/mobile/app/connect.tsx) and [Freighter address adapter](apps/mobile/context/WalletContext.tsx) provide a browser connection path. It is unverified end to end. Native Freighter extension connection is unsupported. | Freighter signing is unsupported by the [Expo transaction hook](apps/mobile/hooks/useSubmitTx.ts), which expects the wallet kit. | Native scheme registration lives in the [Expo app config](apps/mobile/app.json). Browser wallet handoff is unsupported on the [Freighter connection path](apps/mobile/context/WalletContext.tsx). | The [mobile presets](apps/mobile/context/NetworkContext.tsx) supply Testnet and Mainnet labels. The [Freighter adapter](apps/mobile/context/WalletContext.tsx) requests the address. Agreement between the wallet network and the app selection is unverified. |
+
 ## Testing
 
 ```bash
