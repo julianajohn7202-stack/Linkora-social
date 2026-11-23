@@ -10,6 +10,7 @@
  */
 
 import React from "react";
+import Link from "next/link";
 import type { GovProposal, GovStatus } from "linkora-sdk";
 
 type ProposalWithQuorum = GovProposal & { effectiveQuorum: number };
@@ -19,8 +20,8 @@ interface ProposalCardProps {
   connected: boolean;
   onVote: (proposalId: bigint, support: boolean) => void;
   onExecute: (proposalId: bigint) => void;
-  activeStatus: typeof import("linkora-sdk").GovStatus;
-  passedStatus: typeof import("linkora-sdk").GovStatus;
+  activeStatus: GovStatus;
+  passedStatus: GovStatus;
 }
 
 const statusColors: Record<string, { bg: string; text: string; border: string }> = {
@@ -82,7 +83,15 @@ export function ProposalCardSkeleton() {
           <div style={{ ...blockStyle, height: "1.05rem", width: "60%" }} />
           <div style={{ ...blockStyle, height: "0.8rem", width: "40%", marginTop: "0.5rem" }} />
         </div>
-        <div style={{ ...blockStyle, height: "1.5rem", width: "4.5rem", borderRadius: "9999px", flexShrink: 0 }} />
+        <div
+          style={{
+            ...blockStyle,
+            height: "1.5rem",
+            width: "4.5rem",
+            borderRadius: "9999px",
+            flexShrink: 0,
+          }}
+        />
       </div>
 
       {/* Stats grid */}
@@ -169,7 +178,12 @@ export function ProposalCard({
               color: "var(--foreground)",
             }}
           >
-            Proposal #{p.id.toString()}: Update {p.parameter}
+            <Link
+              href={`/governance/${p.id.toString()}`}
+              className="hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              Proposal #{p.id.toString()}: Update {p.parameter}
+            </Link>
           </h3>
           <p
             style={{
