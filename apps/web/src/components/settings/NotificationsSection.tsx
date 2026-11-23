@@ -140,16 +140,22 @@ export function NotificationsSection({ address }: { address: string }) {
         {/* Browser Push Notifications */}
         {pushSupported && (
           <div className="pb-4 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-900">Browser Push Notifications</p>
-                <p className="text-xs text-gray-500 mt-1">
+            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+              <div className="min-w-0 flex-1">
+                <label
+                  htmlFor="toggle-browser-push"
+                  className="block text-sm font-medium text-gray-900 cursor-pointer"
+                >
+                  Browser Push Notifications
+                </label>
+                <p className="text-xs text-gray-500 mt-0.5">
                   Receive notifications even when Linkora is not open
                 </p>
               </div>
               <button
+                id="toggle-browser-push"
                 onClick={handleTogglePush}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                className={`relative mt-0.5 inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 ${
                   settings.browserPushEnabled ? "bg-violet-600" : "bg-gray-200"
                 }`}
                 role="switch"
@@ -218,15 +224,27 @@ interface NotificationToggleProps {
 }
 
 function NotificationToggle({ label, description, checked, onChange }: NotificationToggleProps) {
+  // Derive a stable id from the label so the <label> element can reference
+  // the switch — clicking anywhere on the label text activates only this control.
+  const id = `toggle-${label.toLowerCase().replace(/\s+/g, "-")}`;
+
   return (
-    <div className="flex items-center justify-between py-2">
-      <div>
-        <p className="text-sm font-medium text-gray-900">{label}</p>
-        <p className="text-xs text-gray-500">{description}</p>
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 py-2">
+      {/* Label section grows and wraps naturally; min-w-0 prevents overflow. */}
+      <div className="min-w-0 flex-1">
+        <label
+          htmlFor={id}
+          className="block text-sm font-medium text-gray-900 cursor-pointer"
+        >
+          {label}
+        </label>
+        <p className="text-xs text-gray-500 mt-0.5">{description}</p>
       </div>
+      {/* Switch is flex-shrink-0 so it never collapses at narrow widths. */}
       <button
+        id={id}
         onClick={onChange}
-        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+        className={`relative mt-0.5 inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 ${
           checked ? "bg-violet-600" : "bg-gray-200"
         }`}
         role="switch"
