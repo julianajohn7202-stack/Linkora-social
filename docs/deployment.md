@@ -26,6 +26,7 @@ This guide covers production deployment of the three Linkora backend services:
 9. [Backup and Recovery](#9-backup-and-recovery)
 10. [Notification Service](#10-notification-service-servicessnotification)
 11. [Search Service](#11-search-service-servicessearch)
+12. [Preview Environment Smoke Test](#12-preview-environment-smoke-test)
 
 ---
 
@@ -1187,3 +1188,43 @@ search:
 - `REDIS_URL` is mandatory in production and must point at the same endpoint as
   all other services to share the rate-limit store.
 
+---
+
+## 12. Preview Environment Smoke Test
+
+Run these checks against the same deployed revision before promoting a preview.
+Record the preview URL, deployed commit or image digest, UTC start and end times,
+Stellar network, and contract ID in the promotion record.
+
+### 12.1 Required configuration
+
+| Component | Required configuration                                                                                                                                                                                                                                           |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web build | Preview values for `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_SOROBAN_RPC_URL`, `NEXT_PUBLIC_NETWORK_PASSPHRASE`, and `NEXT_PUBLIC_CONTRACT_ID`. Set `NEXT_PUBLIC_INDEXER_API_URL` to the preview indexer when checking search.                                     |
+| Indexer   | Preview `DATABASE_URL` with migrations applied, `STELLAR_RPC_URL`, matching `CONTRACT_ID`, and `START_LEDGER` at the contract deployment ledger. Apply the Redis requirements in [§2.4](#24-shared-rate-limiting-redis_url).                                     |
+| Reviewer  | Read-only access to the preview indexer database, a known fixture profile with expected public fields, and a recent indexed event or a planned preview fixture event with a known ledger and transaction hash. Agree on a maximum catch-up time before starting. |
+
+### 12.2 Verification and evidence
+
+| Check             | What to do and capture                                                                                                                                                                                                                                                                                                                           | Sample outcome                                                                                                                                                                                                                                  | Failure owner and logs                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser           | In a clean session open the preview, navigate to `/feed` and the fixture profile, and reload both pages. Capture browser version, route, HTTP status, a screenshot of the fixture, and any failed request or uncaught exception. Check that requests use the preview backends.                                                                   | Pass when the feed renders seeded content, the profile displays the expected username, and both routes reload without an uncaught error. Fail if a route falls back to a localhost backend or renders an error.                                 | Web owner checks browser Console and Network plus preview hosting build/runtime logs. Send indexer HTTP failures to the indexer owner with the request ID if available.     |
+| Indexer freshness | Check `/health/ready` and the stream/backfill fields on `/health`. Capture the RPC `getLatestLedger` sequence, the committed cursor before and after the fixture, and the fixture's presence in the relevant API or indexed projection.                                                                                                          | Pass when readiness returns 200 and the fixture at ledger 125040 appears within the agreed window with cursor ≥ 125040. Fail if readiness returns 200 but the known event never appears. A quiet contract can have a cursor below the RPC head. | Indexer owner checks ingestion, backfill and database logs using the fixture ledger and transaction hash. Escalate an unavailable or stalled RPC to the RPC operator.       |
+| Contract read     | Use [`LinkoraClient.getProfile`](../packages/sdk/src/client.ts) with the preview RPC URL, network passphrase and contract ID, and pass the fixture's Stellar address. The [generated client](../packages/sdk/src/generated/client.ts) simulates the call. Capture the method, fixture address, public field comparison and any simulation error. | Pass when the expected fixture username is returned. Fail on a null fixture, mismatched value or RPC simulation error.                                                                                                                          | Contract deployment owner checks the deployment workflow, network and contract ID, fixture setup and simulation error. Escalate RPC transport failures to the RPC operator. |
+
+Sample the [committed cursor](../services/indexer/migrations/006_indexer_cursor.sql)
+on the preview indexer database with a read-only role. The stream ID is the
+contract ID configured by the [indexer entry point](../services/indexer/src/index.ts).
+
+```bash
+psql "$PREVIEW_INDEXER_READONLY_DSN" -v ON_ERROR_STOP=1 -v contract_id="$CONTRACT_ID" <<'SQL'
+SELECT id, processed_cursor, updated_at
+FROM indexer_cursor
+WHERE id = :'contract_id';
+SQL
+```
+
+Record pass or fail for each check, attach redacted evidence, and assign any
+failed check to the owner above. Repeat failed checks after remediation and
+record the results before promotion. Remove credentials, cookies, and auth
+headers from screenshots, logs, and browser exports.
