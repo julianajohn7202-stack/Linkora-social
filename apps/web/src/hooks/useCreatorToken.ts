@@ -22,7 +22,7 @@ export interface CreatorTokenInfo {
 
 export interface CreatorTokenHolder {
   address: string;
-  balance: string;
+  balance?: string;
 }
 
 export interface CreatorTokenTransfer {
@@ -31,6 +31,17 @@ export interface CreatorTokenTransfer {
   amount: string;
   timestamp: string;
 }
+
+// These methods are optional until the SDK exposes creator token management.
+type CreatorTokenClient = LinkoraClient & {
+  getTokenInfo?(token: string): Promise<Omit<CreatorTokenInfo, "supply" | "price"> & {
+    supply: string | bigint;
+    price: string | bigint;
+  }>;
+  getTokenHolders?(token: string): Promise<CreatorTokenHolder[]>;
+  getTokenTransfers?(token: string): Promise<CreatorTokenTransfer[]>;
+  mintCreatorToken?(token: string, amount: string): Promise<void>;
+};
 
 export interface CreatorTokenState {
   token: string | null;
@@ -42,12 +53,12 @@ export interface CreatorTokenState {
   isLoading: boolean;
   error: Error | null;
   refresh: () => Promise<void>;
-  mint: (amount: string) => Promise<void>;
+  mint: (amount?: string) => Promise<void>;
 }
 
 /** Loads a wallet's linked creator token and listens for app-level token transfers. */
 export function useCreatorToken(address: string | null): CreatorTokenState {
-  const clientRef = useRef<LinkoraClient | null>(null);
+  const clientRef = useRef<CreatorTokenClient | null>(null);
   const requestRef = useRef(0);
   const [token, setToken] = useState<string | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
@@ -90,22 +101,32 @@ export function useCreatorToken(address: string | null): CreatorTokenState {
         return;
       }
 
+      const client = clientRef.current!;
       const [tokenInfo, tokenHolders, tokenTransfers] = await Promise.all([
-        clientRef.current!.getTokenInfo(nextToken),
-        clientRef.current!.getTokenHolders(nextToken),
-        clientRef.current!.getTokenTransfers(nextToken),
+        client.getTokenInfo?.(nextToken),
+        client.getTokenHolders?.(nextToken) ?? [],
+        client.getTokenTransfers?.(nextToken) ?? [],
       ]);
       if (requestId !== requestRef.current) return;
 
-      setInfo({
+      setInfo(tokenInfo ? {
         name: tokenInfo.name,
         symbol: tokenInfo.symbol,
         supply: String(tokenInfo.supply),
         price: String(tokenInfo.price),
-      });
-      const sortedHolders = [...tokenHolders].sort(
-        (a, b) => Number(b.balance) - Number(a.balance),
-      );
+      } : null);
+      const sortedHolders = tokenHolders
+        .map((holder) => ({
+          holder,
+          balance: holder.balance == null ? null : BigInt(holder.balance),
+        }))
+        .sort((a, b) => {
+          if (a.balance === b.balance) return 0;
+          if (a.balance === null) return 1;
+          if (b.balance === null) return -1;
+          return a.balance > b.balance ? -1 : 1;
+        })
+        .map(({ holder }) => holder);
       setHolders(sortedHolders.slice(0, 10));
       setHolderCount(tokenHolders.length);
       setTransfers(tokenTransfers);
@@ -141,9 +162,12 @@ export function useCreatorToken(address: string | null): CreatorTokenState {
       const detail = (event as CustomEvent<TransferEventDetail>).detail;
       if (!detail || detail.tokenAddress !== token) return;
       if (detail.balance !== undefined) {
+        if (typeof detail.balance === "number" && !Number.isSafeInteger(detail.balance)) return;
         setBalance(String(detail.balance));
       } else if (detail.recipient === address && detail.amount !== undefined) {
-        setBalance((current) => String(Number(current ?? 0) + Number(detail.amount)));
+        const amount = detail.amount;
+        if (typeof amount === "number" && !Number.isSafeInteger(amount)) return;
+        setBalance((current) => String(BigInt(current ?? "0") + BigInt(amount)));
       }
     };
     window.addEventListener("linkora:creator-token-transfer", onTransfer);
@@ -151,9 +175,12 @@ export function useCreatorToken(address: string | null): CreatorTokenState {
   }, [address, token]);
 
   const mint = useCallback(
-    async (amount: string): Promise<void> => {
+    async (amount?: string): Promise<void> => {
       if (!token) throw new Error("No creator token linked to this wallet.");
-      await clientRef.current!.mintCreatorToken(token, amount);
+      const client = clientRef.current!;
+      if (!client.mintCreatorToken) throw new Error("Creator token minting is not implemented yet.");
+      if (!amount) throw new Error("Enter an amount to mint.");
+      await client.mintCreatorToken(token, amount);
       await refresh();
     },
     [refresh, token],
