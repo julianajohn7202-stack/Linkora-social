@@ -1,89 +1,53 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
+import { useSearchSuggestions, type SearchSuggestion } from "./useSearchSuggestions";
 
-const INDEXER_API_URL = process.env.NEXT_PUBLIC_INDEXER_API_URL ?? "";
+const groupOrder = ["profile", "post", "hashtag", "recent"] as const;
 
-export interface SearchResponse<T = unknown> {
-  results: T[];
-  total?: number;
-}
+export function useSearch(
+  query: string,
+  open: boolean,
+  recentSearches: string[],
+  onSelect: (result: SearchSuggestion) => void,
+  onClose: () => void
+) {
+  const { suggestions, loading, fetchSuggestions, clearSuggestions } = useSearchSuggestions({
+    includePosts: true,
+  });
+  const [activeIndex, setActiveIndex] = useState(-1);
 
-interface UseSearchOptions {
-  debounceMs?: number;
-  endpoint?: string;
-}
+  useEffect(() => {
+    setActiveIndex(-1);
+    if (open && query.trim()) fetchSuggestions(query);
+    else clearSuggestions();
+  }, [query, open, fetchSuggestions, clearSuggestions]);
 
-/** Debounced full-text search that cancels stale requests and ignores late responses. */
-export function useSearch<T = unknown>({ debounceMs = 300, endpoint = "/api/search" }: UseSearchOptions = {}) {
-  const [results, setResults] = useState<T[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const controller = useRef<AbortController | null>(null);
-  const generation = useRef(0);
+  const results: SearchSuggestion[] = query.trim()
+    ? loading
+      ? []
+      : groupOrder.flatMap((type) => suggestions.filter((result) => result.type === type))
+    : recentSearches.map((value) => ({ type: "recent", value }));
+  const selectedIndex = open && results[activeIndex] ? activeIndex : -1;
 
-  const clearPending = useCallback(() => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-    controller.current?.abort();
-    controller.current = null;
-  }, []);
-
-  const search = useCallback((rawQuery: string) => {
-    const query = rawQuery.trim();
-    generation.current += 1;
-    const currentGeneration = generation.current;
-    clearPending();
-    setError(null);
-
-    if (!query) {
-      setResults([]);
-      setIsLoading(false);
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing || !open) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setActiveIndex(-1);
+      onClose();
       return;
     }
+    if (results.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      const start = selectedIndex === -1 && step < 0 ? 0 : selectedIndex;
+      setActiveIndex((start + step + results.length) % results.length);
+    }
+    if (event.key === "Enter" && selectedIndex >= 0) {
+      event.preventDefault();
+      onSelect(results[selectedIndex]);
+    }
+  }
 
-    setIsLoading(true);
-    timer.current = setTimeout(async () => {
-      timer.current = null;
-      const requestController = new AbortController();
-      controller.current = requestController;
-      try {
-        const response = await fetch(
-          `${INDEXER_API_URL}${endpoint}?q=${encodeURIComponent(query)}`,
-          { signal: requestController.signal }
-        );
-        if (!response.ok) throw new Error(`Search request failed (${response.status})`);
-        const payload = (await response.json()) as SearchResponse<T> | T[];
-        const nextResults = Array.isArray(payload) ? payload : payload.results;
-        if (generation.current === currentGeneration && controller.current === requestController) {
-          setResults(nextResults);
-          setError(null);
-        }
-      } catch (err) {
-        if (requestController.signal.aborted) return;
-        if (generation.current === currentGeneration) {
-          setResults([]);
-          setError(err instanceof Error ? err.message : "Search request failed");
-        }
-      } finally {
-        if (generation.current === currentGeneration && controller.current === requestController) {
-          controller.current = null;
-          setIsLoading(false);
-        }
-      }
-    }, debounceMs);
-  }, [clearPending, debounceMs, endpoint]);
-
-  const clearResults = useCallback(() => {
-    generation.current += 1;
-    clearPending();
-    setResults([]);
-    setIsLoading(false);
-    setError(null);
-  }, [clearPending]);
-
-  useEffect(() => () => clearPending(), [clearPending]);
-
-  return { results, isLoading, error, search, clearResults };
+  return { results, loading, selectedIndex, onKeyDown };
 }

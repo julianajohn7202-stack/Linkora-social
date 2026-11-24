@@ -17,6 +17,7 @@
  * automatically.
  */
 
+import { highlightSearchMatch } from "@/lib/highlightSearchMatch";
 import { useEffect, useRef, useState } from "react";
 
 export interface Profile {
@@ -29,6 +30,7 @@ export interface Profile {
 
 interface ProfileCardProps {
   profile: Profile;
+  query?: string;
 }
 
 function formatAddress(address: string): string {
@@ -169,8 +171,8 @@ function FollowButton({ isFollowing, displayName, onFollow, onUnfollow }: Follow
   const ariaLabel = isConfirm
     ? `Click again to unfollow ${displayName}`
     : isActive
-    ? `Unfollow ${displayName}`
-    : `Follow ${displayName}`;
+      ? `Unfollow ${displayName}`
+      : `Follow ${displayName}`;
 
   const label = isConfirm ? "Unfollow?" : isActive ? "Following" : "Follow";
 
@@ -202,10 +204,8 @@ function FollowButton({ isFollowing, displayName, onFollow, onUnfollow }: Follow
 
 // ── ProfileCard ──────────────────────────────────────────────────────────────
 
-export function ProfileCard({ profile }: ProfileCardProps) {
-  const initialState: FollowState = profile.isFollowing
-    ? "idle-following"
-    : "idle-follow";
+export function ProfileCard({ profile, query = "" }: ProfileCardProps) {
+  const initialState: FollowState = profile.isFollowing ? "idle-following" : "idle-follow";
 
   const [followState, dispatch] = useReducer(followReducer, initialState);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -249,15 +249,12 @@ export function ProfileCard({ profile }: ProfileCardProps) {
     followState === "confirming-unfollow" ||
     followState === "transitioning-out";
 
-  const isAnimating =
-    followState === "transitioning-in" || followState === "transitioning-out";
+  const isAnimating = followState === "transitioning-in" || followState === "transitioning-out";
 
   // --- Button label content ---
   let label: React.ReactNode;
   if (followState === "confirming-unfollow") {
-    label = (
-      <span className="follow-btn-label follow-btn-label--confirm">Unfollow?</span>
-    );
+    label = <span className="follow-btn-label follow-btn-label--confirm">Unfollow?</span>;
   } else if (isFollowingState) {
     label = (
       <span className="follow-btn-label">
@@ -278,7 +275,9 @@ export function ProfileCard({ profile }: ProfileCardProps) {
 
       {/* Profile info */}
       <div className="min-w-0 flex-1">
-        <h2 className="truncate font-semibold text-[var(--foreground)]">{displayName}</h2>
+        <h2 className="truncate font-semibold text-[var(--foreground)]">
+          {highlightSearchMatch(displayName, query)}
+        </h2>
         <p className="truncate text-sm text-[var(--text-muted)]" title={profile.address}>
           {formatAddress(profile.address)}
         </p>
