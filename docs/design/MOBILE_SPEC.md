@@ -195,6 +195,48 @@ Allows users to view active and past governance proposals, cast votes (support /
 
 ---
 
+## Offline Behavior and Data Freshness
+
+The root navigator displays **No internet connection** when NetInfo reports a disconnection. When the banner clears, remote services can still be unavailable or behind the chain. Cached posts, notifications, and DM history reflect the last successful sync. Reopen or refresh individual screens as described below.
+
+| Screen | What opens offline | Refresh, writes, and retry |
+| --- | --- | --- |
+| Feed (`/(tabs)/feed`) | Previously loaded posts from the SQLite `cached_posts` table, including locally saved pending posts. An empty cache has no feed content to show. | Pull-to-refresh, retry, and pagination attempt indexer/IPFS sync. A failed sync leaves existing cached rows available. Likes and tips require their normal online submission flow. |
+| Post Detail (`/post/[id]`) | A post already present in SQLite, including cached counts and text. An uncached ID shows “Post not found.” Copying a post link is local. | Opening the route reads SQLite. Refresh Feed online and reopen the post for updated cached data. Deleting a published post requires online submission. |
+| New Post (`/post/new`) | With a connected wallet, the composer can save a submitted post to SQLite as a pending row and return to Feed. | A local success toast confirms the save. Chain submission and indexer confirmation require connectivity. The sync helper requires wallet/RPC options that the current composer and Feed call sites omit, so automatic publish or retry on reconnect is currently unavailable through those paths. |
+| Explore (`/(tabs)/explore`) | The bundled profile and pool catalog is searchable offline. | Changing the query or pulling to refresh reruns the local filter. Catalog entries are fixtures. Open linked detail screens under their own availability rules. |
+| Search (`/search`) | The shared search hook can serve an exact trimmed query from its in-memory cache for two minutes in the same app process. | A cache miss needs the search endpoint. The route expects recent-search and retry APIs that the shared hook currently lacks. Persisted recent searches and the route's retry control are unverified. |
+| Pools List (`/(tabs)/pools`) | `usePools` loads bundled mock pools. | Retry reloads the same fixtures. |
+| Pool Detail (`/pool/[id]`) | `usePool` loads bundled mock details for supported IDs. | Retry reloads fixtures. Real deposits and withdrawals require online transaction submission. |
+| Pool Detail (`/pools/[id]`) | The screen renders a mock pool record and any updates held in the in-memory `poolStore`. | Live balance events require the configured WebSocket. Reopen the screen to retry the connection. |
+| Pool Admins (`/pool/[id]/admins`) | The mock pool record exposes admins and proposals in memory. | Admin actions update the mock store for the current app process. Restarting clears those changes. |
+| Profile (own) (`/(tabs)/profile`) | Local wallet and network metadata and the mock profile returned by `useProfile` are available when an address is present. | Retry repeats wallet and profile lookups. Live follower and following data require the indexer. |
+| Profile Detail (`/profile/[address]`) | The mock profile and author posts already loaded from the SQLite feed cache can display. | Pull-to-refresh retries profile/social lookups and feed sync. Follow and unfollow require online submission. |
+| Followers and Following (`/profile/followers`, `/profile/following`) | Lists are fetched from the indexer and held in screen memory. A fresh open offline may show a load error. | Retry, pull-to-refresh, and pagination request remote data. Retry after reconnecting. |
+| Edit Profile (`/profile/edit`) | Form fields can be edited while the screen is open. | Saving requires an online wallet transaction. Retry the save after reconnecting. The form has no persisted draft or write queue. |
+| Connect Wallet (`/connect`) | The screen can show locally restored wallet metadata. Disconnect clears the stored address locally. | New wallet access and live account checks depend on the wallet provider and RPC. Retry connection when service returns. |
+| DM Conversation (`/dm/[address]`) | With a wallet and existing local keys, the thread can display SQLite messages. DM keys are held in SecureStore. The current screen uses the mock `DmService`. | Sends create SQLite outbox rows before attempting delivery. A rejected send is stored as failed. Reconnect reconciles incoming messages from the configured conversation source and reloads the thread. Failed sends have no automatic replay. |
+| Mini Apps (`/(tabs)/mini-apps`) | Installed manifests load from SecureStore, with bundled defaults for a new install. | Uninstall updates the local registry offline. The registry contains metadata and entry URLs. |
+| Mini App Viewer (`/mini-app/[id]`) | The native wrapper and installed manifest can open locally. | The WebView loads a remote entry URL. Use reload after reconnecting if the entry fails to load. |
+| Mini App Create Post (`/mini-app/create-post`) | The form can collect text and resolve the running mini app's bridge request with a simulated post ID. | The result is scoped to the in-memory bridge. The screen performs no chain submission or persisted queue write. |
+| Settings (`/settings`) | Network selection and custom RPC settings are stored on-device. | Save, reset, and switch settings locally. Using the selected RPC still requires a connection. |
+| Blocked Users (`/settings/blocked`) | The screen can open, but the list requires the indexer and has no persistent offline copy. | Retry the fetch after reconnecting. Blocking and unblocking require online submission. |
+| Notifications (`/notifications`) | The hook loads the SQLite notification list and unread count before attempting remote sync. | Reopen to retry the background fetch. Mark all read updates SQLite first and then attempts the remote update, with no queued retry. The route currently lacks a refresh control and the hook has no per-item mark-read handler. |
+| Governance (`/governance`, `/governance/[id]`) | The governance screens render bundled proposal fixtures. | Retry reloads mock proposals. The vote hook simulates submission, so displayed votes do not verify writes to the chain. |
+| Creator Dashboard (`/creator/dashboard`) | Previously loaded analytics may remain in screen memory during a failed refresh. | Opening without loaded metrics, pulling to refresh, and retrying require the indexer. Analytics are not persisted for offline reopening. |
+
+### Reconnect Verification
+
+1. On a connected device, load Feed and note a post ID and its visible counts. Open Notifications and an existing DM thread with local keys. Record which rows are already present before disconnecting.
+2. Disable Wi-Fi and mobile data. Confirm the offline banner appears. Reopen the cached post and a known uncached ID. Confirm the cached post opens and the uncached ID shows the fallback. Pull to refresh Feed and confirm already displayed posts remain available after the request fails.
+3. Reopen a cached DM thread and the Mini Apps list. Confirm local messages and manifests are available. Try an indexer-backed list and a remote mini app entry to exercise their offline failure paths.
+4. With the wallet still connected, submit a regular post and confirm the pending item is visible in Feed. Treat the toast as confirmation of the local write. For any failed DM send, confirm the failed row remains visible.
+5. Restore connectivity and confirm the banner clears. Pull to refresh Feed, reopen the post, retry the indexer-backed list, reload the WebView, and reopen Notifications. Compare results with known updates from the connected service. Allow time for the indexer to catch up before comparing chain-backed counts.
+6. Keep the DM thread open across reconnect. With a shared relay source, send a message from a second client while the device is offline, then confirm it appears once after reconnect. With the bundled mock, verify reconciliation using a message seeded in the mock source. Check that a failed outbox entry is not automatically resent.
+7. Check the locally saved Feed post separately from refreshed remote rows. On the current call sites, it can remain pending after reconnect. When testing a build with configured post sync, verify that the confirmed chain ID replaces the local entry once the indexer returns it.
+
+---
+
 ## Navigation Structure
 
 ```
