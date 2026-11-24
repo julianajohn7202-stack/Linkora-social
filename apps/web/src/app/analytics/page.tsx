@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { useWallet } from "@/hooks/useWallet";
 import { EmptyStateIllustration } from "@/components/ui/EmptyStateIllustration";
 import {
@@ -20,72 +21,125 @@ import {
   fetchAttestation,
   computeAnalytics,
   generateCSV,
-  dateRangeToLedgerRange,
+  ledgerToDate,
+  type AnalyticsAttestation,
+  type IndexerPost,
   type AnalyticsData,
 } from "@/lib/analytics";
 
-type DateRange = 7 | 30 | 90;
+const DATE_PRESETS = [7, 30, 90];
+const DEFAULT_DAYS = 30;
+const DAY_MS = 86_400_000;
+
+type DateWindow = { start: string; end: string };
 type State =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "empty" }
-  | { status: "loaded"; data: AnalyticsData };
+  | { status: "loaded"; posts: IndexerPost[]; attestation: AnalyticsAttestation | null };
+
+function isDate(value: string | null): value is string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function presetWindow(days: number, end: string): DateWindow {
+  const start = new Date(Date.parse(end) - (days - 1) * DAY_MS).toISOString().slice(0, 10);
+  return { start, end };
+}
+
+function saveWindow({ start, end }: DateWindow) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("start", start);
+  url.searchParams.set("end", end);
+  window.history.replaceState(null, "", url);
+}
 
 export default function AnalyticsPage() {
+  return (
+    <Suspense
+      fallback={
+        <p className="p-8" role="status">
+          Loading creator analytics…
+        </p>
+      }
+    >
+      <AnalyticsReport />
+    </Suspense>
+  );
+}
+
+function AnalyticsReport() {
   const { address, connected } = useWallet();
-  const [dateRange, setDateRange] = useState<DateRange>(30);
+  const params = useSearchParams();
+  const start = params.get("start");
+  const end = params.get("end");
+  const hasValidWindow = isDate(start) && isDate(end) && start <= end;
   const [state, setState] = useState<State>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
   const [exporting, setExporting] = useState(false);
 
-  const loadData = useCallback(async () => {
-    if (!connected || !address) {
-      setState({ status: "empty" });
-      return;
-    }
-
+  useEffect(() => {
+    if (!connected || !address) return;
+    let active = true;
     setState({ status: "loading" });
-    try {
-      const [posts, attestation] = await Promise.all([
-        fetchPosts(address),
-        fetchAttestation(address),
-      ]);
 
-      if (posts.length === 0) {
-        setState({ status: "empty" });
-        return;
-      }
-
-      const ledgerRange = dateRangeToLedgerRange(dateRange);
-      const data = computeAnalytics(posts, attestation, ledgerRange);
-      setState({ status: "loaded", data });
-    } catch (err) {
-      setState({
-        status: "error",
-        message: err instanceof Error ? err.message : "Failed to load analytics",
+    Promise.all([fetchPosts(address), fetchAttestation(address)])
+      .then(([posts, attestation]) => {
+        if (active) setState({ status: "loaded", posts, attestation });
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setState({
+            status: "error",
+            message: err instanceof Error ? err.message : "Failed to load analytics",
+          });
+        }
       });
-    }
-  }, [address, connected, dateRange]);
+
+    return () => {
+      active = false;
+    };
+  }, [address, connected, attempt]);
+
+  // Keep the existing report's latest-post anchor and ledger-based chart dates.
+  const latestLedger =
+    state.status === "loaded"
+      ? state.posts.reduce((latest, post) => Math.max(latest, post.created_ledger), 0)
+      : 0;
+  const latestDate = latestLedger
+    ? ledgerToDate(latestLedger).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+  const dateWindow = hasValidWindow ? { start, end } : presetWindow(DEFAULT_DAYS, latestDate);
+  const selectedDays = (Date.parse(dateWindow.end) - Date.parse(dateWindow.start)) / DAY_MS + 1;
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (connected && state.status === "loaded" && !hasValidWindow) {
+      saveWindow(presetWindow(DEFAULT_DAYS, latestDate));
+    }
+  }, [connected, state.status, hasValidWindow, latestDate]);
+
+  const data =
+    state.status === "loaded" && state.posts.length
+      ? computeAnalytics(state.posts, state.attestation, dateWindow)
+      : null;
 
   const handleExport = useCallback(() => {
-    if (state.status !== "loaded") return;
+    if (!data) return;
     setExporting(true);
     try {
-      const csv = generateCSV(state.data);
+      const csv = generateCSV(data);
       const blob = new Blob([csv], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `analytics-${address?.slice(0, 8)}-${dateRange}d.csv`;
+      a.download = `analytics-${address?.slice(0, 8)}-${dateWindow.start}-to-${dateWindow.end}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
       setExporting(false);
     }
-  }, [state, address, dateRange]);
+  }, [data, address, dateWindow.start, dateWindow.end]);
 
   if (!connected || !address) {
     return (
@@ -119,12 +173,14 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-3">
             {/* Date range selector */}
             <div className="flex rounded-xl border border-[var(--bg-tertiary)] overflow-hidden">
-              {([7, 30, 90] as DateRange[]).map((d) => (
+              {DATE_PRESETS.map((d) => (
                 <button
                   key={d}
-                  onClick={() => setDateRange(d)}
+                  onClick={() => saveWindow(presetWindow(d, latestDate))}
+                  disabled={state.status !== "loaded"}
+                  aria-pressed={selectedDays === d}
                   className={`px-4 py-2 text-sm font-medium transition-colors ${
-                    dateRange === d
+                    selectedDays === d
                       ? "bg-[var(--accent-coral)] text-white"
                       : "bg-[var(--bg-secondary)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                   }`}
@@ -137,13 +193,19 @@ export default function AnalyticsPage() {
             {/* Export */}
             <button
               onClick={handleExport}
-              disabled={state.status !== "loaded" || exporting}
+              disabled={!data || exporting}
               className="px-4 py-2 text-sm font-medium rounded-xl border border-[var(--bg-tertiary)] bg-[var(--bg-secondary)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors disabled:opacity-50"
             >
               {exporting ? "Exporting..." : "Export CSV"}
             </button>
           </div>
         </div>
+
+        {state.status === "loaded" && (
+          <p className="text-sm text-[var(--text-muted)]">
+            {dateWindow.start} through {dateWindow.end}
+          </p>
+        )}
 
         {state.status === "loading" && (
           <div className="space-y-6" aria-label="Loading creator analytics" aria-busy="true">
@@ -167,7 +229,7 @@ export default function AnalyticsPage() {
           <div className="bg-[var(--bg-secondary)] rounded-2xl border border-[var(--bg-tertiary)] p-12 text-center">
             <p className="text-[var(--error)] mb-4">{state.message}</p>
             <button
-              onClick={loadData}
+              onClick={() => setAttempt((prev) => prev + 1)}
               className="px-6 py-2 rounded-xl bg-[var(--accent-coral)] text-white font-medium hover:opacity-90 transition-opacity"
             >
               Retry
@@ -175,7 +237,7 @@ export default function AnalyticsPage() {
           </div>
         )}
 
-        {state.status === "empty" && (
+        {state.status === "loaded" && !data?.summary.totalPosts && (
           <EmptyStateIllustration
             variant="creator"
             title="No analytics data yet"
@@ -183,7 +245,7 @@ export default function AnalyticsPage() {
           />
         )}
 
-        {state.status === "loaded" && <Dashboard data={state.data} />}
+        {data && data.summary.totalPosts > 0 && <Dashboard data={data} />}
       </div>
     </div>
   );
