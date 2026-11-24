@@ -1,55 +1,65 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { LinkoraClient } from "../../../../../packages/sdk/src/client";
 import { useCreatorToken } from "../useCreatorToken";
 
-jest.mock("../../../../../packages/sdk/src/client", () => ({
-  LinkoraClient: jest.fn().mockImplementation(() => ({ getProfile: jest.fn() })),
-}));
+const mockFetch = jest.fn();
+const mockBalance = jest.fn();
+const mockMint = jest.fn();
 
-const mockGetProfile = () =>
-  (LinkoraClient as jest.MockedClass<typeof LinkoraClient>).mock.results[0].value
-    .getProfile as jest.Mock;
+jest.mock("../../../../../packages/sdk/src/client", () => ({ LinkoraClient: jest.fn() }));
+jest.mock("../../../../../packages/sdk/src/tip-client", () => ({
+  CreatorTokenClient: jest.fn().mockImplementation(() => ({
+    getBalance: mockBalance,
+    mint: mockMint,
+  })),
+}));
+jest.mock("@stellar/freighter-api", () => ({ signTransaction: jest.fn() }));
 
 describe("useCreatorToken", () => {
-  beforeEach(() => jest.clearAllMocks());
-
-  it("returns a null token when no wallet address is supplied", async () => {
-    const { result } = renderHook(() => useCreatorToken(null));
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    expect(result.current.token).toBeNull();
-    expect(mockGetProfile()).not.toHaveBeenCalled();
-  });
-
-  it("exposes profile lookup failures as an error state", async () => {
-    mockGetProfile().mockRejectedValue(new Error("Indexer unavailable"));
-    const { result } = renderHook(() => useCreatorToken("GUSER"));
-
-    await waitFor(() => expect(result.current.error?.message).toBe("Indexer unavailable"));
-    expect(result.current.token).toBeNull();
-  });
-
-  it("rejects minting while creator-token mint support is unavailable", async () => {
-    mockGetProfile().mockResolvedValue({ creator_token: "GTOKEN" });
-    const { result } = renderHook(() => useCreatorToken("GUSER"));
-    await waitFor(() => expect(result.current.token).toBe("GTOKEN"));
-
-    await expect(result.current.mint()).rejects.toThrow("not implemented yet");
-  });
-
-  it("updates the balance on a matching token Transfer event", async () => {
-    mockGetProfile().mockResolvedValue({ creator_token: "GTOKEN" });
-    const { result } = renderHook(() => useCreatorToken("GUSER"));
-    await waitFor(() => expect(result.current.token).toBe("GTOKEN"));
-
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("linkora:creator-token-transfer", {
-          detail: { tokenAddress: "GTOKEN", recipient: "GUSER", amount: "3" },
-        })
-      );
+  const originalFetch = global.fetch;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    global.fetch = mockFetch;
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: "CTOKEN", info: { name: "Creator", symbol: "CRT", decimals: 7 } }),
     });
+    mockBalance.mockResolvedValue("0");
+    mockMint.mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
 
-    expect(result.current.balance).toBe("3");
+  it("skips the indexer for a disconnected wallet", () => {
+    const { result } = renderHook(() => useCreatorToken(null));
+    expect(result.current.token).toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("reports indexer failures as an Error", async () => {
+    mockFetch.mockRejectedValue(new Error("Indexer unavailable"));
+    const { result } = renderHook(() => useCreatorToken("GUSER"));
+    await waitFor(() => expect(result.current.error?.message).toBe("Indexer unavailable"));
+  });
+
+  it("mints through the SDK using the indexed token precision", async () => {
+    const { result } = renderHook(() => useCreatorToken("GUSER"));
+    await waitFor(() => expect(result.current.token).toBe("CTOKEN"));
+    await act(() => result.current.mint("1.25"));
+    expect(mockMint).toHaveBeenCalledWith("CTOKEN", "GUSER", "1.25", 7, {
+      signTransaction: expect.any(Function),
+    });
+  });
+
+  it("reads a fresh balance after a matching transfer", async () => {
+    const { result } = renderHook(() => useCreatorToken("GUSER"));
+    await waitFor(() => expect(result.current.balance).toBe("0"));
+    mockBalance.mockResolvedValue("3");
+    act(() => {
+      window.dispatchEvent(new CustomEvent("linkora:creator-token-transfer", {
+        detail: { tokenAddress: "CTOKEN" },
+      }));
+    });
+    await waitFor(() => expect(result.current.balance).toBe("3"));
   });
 });

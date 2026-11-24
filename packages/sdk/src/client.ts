@@ -353,7 +353,6 @@ export class LinkoraClient extends GeneratedLinkoraClient {
   private readonly _timeoutMs: number;
   private readonly _allowHttp: boolean;
   private readonly _horizonUrl?: string;
-  private readonly _indexerUrl: string;
   private readonly _rpcServer: rpc.Server;
   private readonly _indexerUrl: string;
 
@@ -371,7 +370,6 @@ export class LinkoraClient extends GeneratedLinkoraClient {
     this._timeoutMs = config.timeoutMs ?? 30_000;
     this._allowHttp = resolveAllowHttp({ rpcUrl: config.rpcUrl, allowHttp: config.allowHttp });
     this._horizonUrl = config.horizonUrl;
-    this._indexerUrl = (config.indexerUrl ?? "http://localhost:3001").replace(/\/$/, "");
 
     this._rpcServer = new rpc.Server(this._rpcUrl, { allowHttp: this._allowHttp });
     this._indexerUrl = (config.indexerUrl ?? "http://localhost:3001/api").replace(/\/$/, "");

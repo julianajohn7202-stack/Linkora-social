@@ -2,13 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import { useCreatorToken } from '@/hooks/useCreatorToken';
+import { useWallet } from '@/hooks/useWallet';
 
-function formatAmount(value: bigint | undefined, decimals = 18): string {
-  if (value === undefined) return '—';
+function formatAmount(raw: string | undefined, decimals: number): string {
+  if (raw === undefined) return '—';
+  const value = BigInt(raw);
   const base = BigInt(10) ** BigInt(decimals);
   const whole = value / base;
   const fraction = (value % base).toString().padStart(decimals, '0').slice(0, 4);
-  return `${whole.toString()}.${fraction}`;
+  return fraction ? `${whole}.${fraction}` : String(whole);
 }
 
 function shortenAddress(address: string): string {
@@ -17,8 +19,12 @@ function shortenAddress(address: string): string {
 }
 
 export default function CreatorTokensPage() {
+  const { address } = useWallet();
   const {
     token,
+    info,
+    balance,
+    holderCount,
     holders,
     transfers,
     isLoading,
@@ -26,7 +32,8 @@ export default function CreatorTokensPage() {
     mint,
     isMinting,
     mintError,
-  } = useCreatorToken();
+  } = useCreatorToken(address);
+  const decimals = info?.decimals ?? 0;
 
   const [mintAmount, setMintAmount] = useState('');
 
@@ -63,9 +70,9 @@ export default function CreatorTokensPage() {
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">
-            {token?.name ?? 'Creator Token'}{' '}
-            {token?.symbol ? (
-              <span className="text-base font-normal text-gray-500">({token.symbol})</span>
+            {info?.name ?? 'Creator Token'}{' '}
+            {info?.symbol ? (
+              <span className="text-base font-normal text-gray-500">({info.symbol})</span>
             ) : null}
           </h1>
           <p className="mt-1 text-sm text-gray-500">Manage your creator token supply and holders.</p>
@@ -75,21 +82,22 @@ export default function CreatorTokensPage() {
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-lg border border-gray-200 p-4">
           <p className="text-xs uppercase tracking-wide text-gray-500">Total Supply</p>
-          <p className="mt-1 text-lg font-medium">{formatAmount(token?.totalSupply)}</p>
+          <p className="mt-1 text-lg font-medium">{formatAmount(info?.supply, decimals)}</p>
         </div>
         <div className="rounded-lg border border-gray-200 p-4">
           <p className="text-xs uppercase tracking-wide text-gray-500">Price</p>
           <p className="mt-1 text-lg font-medium">
-            {token?.price !== undefined ? `${token.price} ETH` : '—'}
+            {info?.price ?? '—'}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 p-4">
           <p className="text-xs uppercase tracking-wide text-gray-500">Holders</p>
-          <p className="mt-1 text-lg font-medium">{holders.length}</p>
+          <p className="mt-1 text-lg font-medium">{holderCount}</p>
         </div>
       </section>
 
       <section className="rounded-lg border border-gray-200 p-4">
+        <p className="mb-2 text-sm">Your balance {formatAmount(balance ?? undefined, decimals)}</p>
         <h2 className="text-lg font-medium">Mint New Tokens</h2>
         <p className="mt-1 text-sm text-gray-500">
           Mint additional tokens to your creator supply. This will open a transaction for confirmation.
@@ -107,7 +115,7 @@ export default function CreatorTokensPage() {
           <button
             type="button"
             onClick={handleMint}
-            disabled={isMinting || !mintAmount}
+            disabled={isMinting || !mintAmount || !token}
             className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             {isMinting ? 'Minting…' : 'Mint Tokens'}
@@ -134,7 +142,7 @@ export default function CreatorTokensPage() {
                 <tr key={holder.address} className="border-b border-gray-100">
                   <td className="py-2">{index + 1}</td>
                   <td className="py-2 font-mono">{shortenAddress(holder.address)}</td>
-                  <td className="py-2 text-right">{formatAmount(holder.balance)}</td>
+                  <td className="py-2 text-right">{formatAmount(holder.balance, decimals)}</td>
                 </tr>
               ))}
             </tbody>
@@ -153,17 +161,17 @@ export default function CreatorTokensPage() {
                 <th className="py-2">From</th>
                 <th className="py-2">To</th>
                 <th className="py-2 text-right">Amount</th>
-                <th className="py-2 text-right">Tx</th>
+                <th className="py-2 text-right">Time</th>
               </tr>
             </thead>
             <tbody>
-              {transfers.map((transfer) => (
-                <tr key={transfer.hash} className="border-b border-gray-100">
+              {transfers.map((transfer, index) => (
+                <tr key={`${transfer.timestamp}-${index}`} className="border-b border-gray-100">
                   <td className="py-2 font-mono">{shortenAddress(transfer.from)}</td>
                   <td className="py-2 font-mono">{shortenAddress(transfer.to)}</td>
-                  <td className="py-2 text-right">{formatAmount(transfer.amount)}</td>
+                  <td className="py-2 text-right">{formatAmount(transfer.amount, decimals)}</td>
                   <td className="py-2 text-right font-mono">
-                    {transfer.hash ? shortenAddress(transfer.hash) : '—'}
+                    {transfer.timestamp}
                   </td>
                 </tr>
               ))}
