@@ -9,6 +9,7 @@ This document describes the major components of the Linkora platform and how the
 1. [High-level overview](#1-high-level-overview)
 2. [Component breakdown](#2-component-breakdown)
 3. [DM encryption architecture](#3-dm-encryption-architecture)
+4. [Database ownership](#4-database-ownership)
 
 ---
 
@@ -181,3 +182,55 @@ Forward secrecy is planned for a future protocol version using a Double Ratchet 
 | High-level `DmService` (key publish, send, receive)  | [`packages/sdk/src/dm/index.ts`](../packages/sdk/src/dm/index.ts)       |
 | Relay server: Stellar signature verification         | [`services/dm-relay/src/auth.ts`](../services/dm-relay/src/auth.ts)     |
 | Relay server: message routes                         | [`services/dm-relay/src/routes.ts`](../services/dm-relay/src/routes.ts) |
+
+---
+
+## 4. Database ownership
+
+A service's `DATABASE_URL` selects its database. Use the deployment's actual
+database and schema when tracing a row. The [base Compose file](../docker-compose.yml)
+points the indexer, oracle, search and notification at the same PostgreSQL
+database, while the [staging overlay](../docker-compose.staging.yml) gives
+notification a separate database.
+
+| Service | Schema owner and write path | Read consumers | Migration location |
+| --- | --- | --- | --- |
+| Indexer | Owns indexed contract data, including `raw_events`, profiles, posts, follows, tips and pools. The [ingestion pipeline](../services/indexer/src/pipeline.ts) commits raw events, [domain writes](../services/indexer/src/handlers) and the processed cursor in one transaction. The [notification service module](../services/indexer/src/notifications/service.ts) writes preferences and device tokens. The [event dispatcher](../services/indexer/src/notifications/events.ts) records push deduplication in `sent_notifications`. | [Indexer REST API](../services/indexer/src/api/index.ts) serves web and mobile clients. Search and the analytics oracle read the shared indexed data. | [Indexer SQL migrations](../services/indexer/migrations/README.md) and startup initialization in [`index.ts`](../services/indexer/src/index.ts). |
+| DM relay | Owns `dm_messages` and `message_idempotency` in its relay database. [Relay database code](../services/dm-relay/src/database.ts) stores ciphertext and idempotency records, tracks delivery and removes expired records. | [Relay routes](../services/dm-relay/src/routes.ts) provide message retrieval to authenticated clients through the relay. | [Relay SQL migrations](../services/dm-relay/migrations) and [migration runner](../services/dm-relay/src/migrate.ts). |
+| Notification | The [preferences module](../services/notification/src/preferences.ts) reads and upserts `notification_preferences` via the configured pool, with a process-local store when no pool is configured. The optional [in-app adapter](../services/notification/src/channels/inapp.ts) writes inbox rows and read flags when a caller wires it with a compatible schema. | The [preferences routes](../services/notification/src/index.ts) and [dispatcher](../services/notification/src/dispatcher.ts) read preferences. The in-app adapter broadcasts its inserted row to the caller's subscribers. | Standalone preference columns are created or extended in [`ensureTableColumns`](../services/notification/src/preferences.ts). On a shared database, [indexer migration 011](../services/indexer/migrations/011_notification_preferences.sql) defines the base preference table. |
+| Search | Reads indexer-owned posts and profiles in the [search entry point](../services/search/src/index.ts). The separate [search indexing helper](../services/search/src/indexer.ts) contains writes to derived `search_vector` columns when wired. | Search API clients consume ranked results. | Search schema for the shared dataset lives in [indexer migrations](../services/indexer/migrations), including the [post FTS column](../services/indexer/migrations/009_posts_fts.sql) and [unified search view](../services/indexer/migrations/018_search_index.sql). |
+| Analytics oracle | The [oracle query layer](../services/analytics-oracle/src/db.ts) reads the indexer's SQL data. The [oracle entry point](../services/analytics-oracle/src/index.ts) produces attestations for on-chain submission. | Oracle aggregation reads indexed activity such as posts, follows and tips. Consumers of signed attestations use the oracle API or chain. | Uses the [indexer migrations](../services/indexer/migrations) for shared tables. |
+
+The [media service](../services/media/src/index.ts) processes uploaded image
+bytes in its current entry point without a database connection. Redis caches
+and rate-limit counters are operational state.
+
+### Shared datasets and derived projections
+
+- **Contract data.** The contract owns on-chain state. Indexer tables are
+  off-chain projections of its events. The [cursor](../services/indexer/migrations/006_indexer_cursor.sql)
+  tracks ingestion progress and the [state root](../services/indexer/src/stateRoot.ts)
+  records a digest of processed state. Search and oracle consumers use the
+  indexed copy, so their results depend on indexer freshness.
+- **Search and ranking.** The [`search_index` view](../services/indexer/migrations/018_search_index.sql)
+  derives from profiles and posts. The [score refresh job](../services/indexer/src/score-refresh.ts)
+  refreshes `post_scores`, and the [reputation writer](../services/indexer/src/reputation.ts)
+  maintains `reputation_scores`. Source record changes belong to the indexer
+  ingestion path.
+- **Notification data.** Both notification entry points can touch
+  `notification_preferences` when pointed at the same schema. The indexer
+  [sent-notification ledger](../services/indexer/migrations/008_sent_notifications.sql)
+  tracks dispatch deduplication. The indexer
+  [inbox definitions](../services/indexer/migrations/016_notifications.sql)
+  [use different columns](../services/indexer/migrations/020_notifications.sql)
+  from the standalone in-app adapter. Check the deployed table shape and the
+  caller's SQL before assuming either inbox definition supports that adapter.
+
+### Verification
+
+Check `current_database()`, `current_schema()` and the deployed migration
+history or schema against the write path above. Confirm the oracle role has
+read access to shared tables, relay writes use the relay database, and
+notification preference routes use the intended shared or separate schema.
+See the [deployment migration steps](deployment.md#3-database-migration-steps)
+and [migration CI workflow](../.github/workflows/migrations.yml).
