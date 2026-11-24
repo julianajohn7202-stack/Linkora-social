@@ -55,4 +55,4 @@ jobs:
         run: pnpm run test
 
       - name: Validate Dockerfile builds successfully
-        run: docker build -t linkora-media:ci ./services/media
+        run: docker build -t linkora-media:ci -f services/media/Dockerfile .
