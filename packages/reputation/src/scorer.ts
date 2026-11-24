@@ -24,3 +24,13 @@ export function calculateReputationScore(activity: ReputationActivity): number {
 
   return Math.min(score, Number.MAX_SAFE_INTEGER);
 }
+
+export type ReputationTier = "unranked" | "bronze" | "silver" | "gold" | "diamond";
+
+export function scoreToTier(score: number): ReputationTier {
+  if (score >= 8_500) return "diamond";
+  if (score >= 6_000) return "gold";
+  if (score >= 3_000) return "silver";
+  if (score >= 1_000) return "bronze";
+  return "unranked";
+}
