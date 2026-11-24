@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { validateUsername, validateStellarAddress } from '@/lib/validate';
 import { FieldError } from './FieldError';
 
@@ -14,6 +14,8 @@ interface ProfileFormProps {
   onSubmit: (values: ProfileFormValues) => void | Promise<void>;
   initialValues?: Partial<ProfileFormValues>;
   disabled?: boolean;
+  /** Optional submit-level error message (e.g. network failure) shown above the button. */
+  submitError?: string;
 }
 
 interface FormErrors {
@@ -21,7 +23,12 @@ interface FormErrors {
   creatorToken?: string;
 }
 
-export function ProfileForm({ onSubmit, initialValues = {}, disabled = false }: ProfileFormProps) {
+export function ProfileForm({
+  onSubmit,
+  initialValues = {},
+  disabled = false,
+  submitError,
+}: ProfileFormProps) {
   const [username, setUsername] = useState(initialValues.username ?? '');
   const [creatorToken, setCreatorToken] = useState(initialValues.creatorToken ?? '');
   const [errors, setErrors] = useState<FormErrors>({});
@@ -29,6 +36,12 @@ export function ProfileForm({ onSubmit, initialValues = {}, disabled = false }: 
   const [usernameValid, setUsernameValid] = useState(false);
   const [usernameTouched, setUsernameTouched] = useState(Boolean(initialValues.username));
   const [submitting, setSubmitting] = useState(false);
+
+  // Refs used to focus the first invalid field on submit.
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const creatorTokenRef = useRef<HTMLInputElement>(null);
+  // Ref for the error summary so we can move keyboard focus to it.
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setUsername(initialValues.username ?? '');
@@ -71,6 +84,16 @@ export function ProfileForm({ onSubmit, initialValues = {}, disabled = false }: 
       setErrors(errs);
       setUsernameFeedback(errs.username);
       setUsernameValid(false);
+
+      // Focus the first invalid field so keyboard users land on the problem.
+      // Fall back to the error summary if no specific ref is available.
+      if (errs.username) {
+        usernameRef.current?.focus();
+      } else if (errs.creatorToken) {
+        creatorTokenRef.current?.focus();
+      } else {
+        errorSummaryRef.current?.focus();
+      }
       return;
     }
     setSubmitting(true);
@@ -83,12 +106,60 @@ export function ProfileForm({ onSubmit, initialValues = {}, disabled = false }: 
 
   return (
     <form onSubmit={handleSubmit} noValidate aria-label="Edit profile" className="flex flex-col gap-4">
+      {/* Submit-time / field-level error summary */}
+      {(Object.keys(errors).length > 0 || submitError) && (
+        <div
+          ref={errorSummaryRef}
+          role="alert"
+          aria-live="assertive"
+          tabIndex={-1}
+          className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+        >
+          {submitError ? (
+            <p>{submitError}</p>
+          ) : (
+            <>
+              <p className="font-semibold mb-1">Please fix the following before saving:</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                {errors.username && (
+                  <li>
+                    <button
+                      type="button"
+                      className="underline hover:no-underline focus:outline-none focus:ring-1 focus:ring-red-500"
+                      onClick={() => usernameRef.current?.focus()}
+                    >
+                      Username
+                    </button>
+                    {': '}
+                    {errors.username}
+                  </li>
+                )}
+                {errors.creatorToken && (
+                  <li>
+                    <button
+                      type="button"
+                      className="underline hover:no-underline focus:outline-none focus:ring-1 focus:ring-red-500"
+                      onClick={() => creatorTokenRef.current?.focus()}
+                    >
+                      Creator Token Address
+                    </button>
+                    {': '}
+                    {errors.creatorToken}
+                  </li>
+                )}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Username */}
       <div>
         <label htmlFor="profile-username" className="block text-sm font-medium mb-1">
           Username <span aria-hidden="true" className="text-red-500">*</span>
         </label>
         <input
+          ref={usernameRef}
           id="profile-username"
           name="username"
           type="text"
@@ -132,6 +203,7 @@ export function ProfileForm({ onSubmit, initialValues = {}, disabled = false }: 
           <span className="text-xs text-gray-500 font-normal">(optional — your SEP-41 token)</span>
         </label>
         <input
+          ref={creatorTokenRef}
           id="profile-creator-token"
           name="creatorToken"
           type="text"
