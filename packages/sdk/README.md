@@ -401,6 +401,83 @@ If you attempt to sign and submit this XDR directly, the network will reject it 
 
 ---
 
+## Token precision and base units
+
+Read the selected token contract's SEP-41 `decimals()` on the same Stellar
+network that the transaction will use. One whole token equals `10 ** decimals`
+base units. XLM has seven decimals and calls its base units stroops. Other
+tokens use their own precision.
+
+Keep human input as a decimal string. Convert once at the UI boundary and pass
+the result as a `bigint` to the SDK. For example, `prepareTipTx` encodes the
+integer as Soroban `i128`, and the contract uses it as the token amount.
+The SDK expects a positive amount for tips. Each contract method can impose
+additional amount limits.
+
+The sample parser rejects excess fractional digits, including trailing zeroes,
+so the user must choose the exact representable amount. It accepts unsigned
+decimal input with a leading digit and a period as the decimal separator.
+Use integer arithmetic throughout. Keep base units as decimal integer strings
+when crossing a JSON boundary, then decode them with `BigInt`.
+
+```ts
+function parseTokenAmount(input: string, decimals: number): bigint {
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(input.trim());
+  if (!match) {
+    throw new Error("Enter a non-negative decimal amount.");
+  }
+
+  const [, whole, fraction = ""] = match;
+  if (fraction.length > decimals) {
+    throw new Error(`Enter at most ${decimals} fractional digits.`);
+  }
+
+  const amount = BigInt(whole + fraction.padEnd(decimals, "0"));
+  if (amount > (1n << 127n) - 1n) {
+    throw new RangeError("Amount exceeds the Soroban i128 range.");
+  }
+  return amount;
+}
+
+function formatTokenAmount(amount: bigint, decimals: number): string {
+  const sign = amount < 0n ? "-" : "";
+  const digits = (amount < 0n ? -amount : amount).toString();
+  if (decimals === 0) return sign + digits;
+
+  const padded = digits.padStart(decimals + 1, "0");
+  return `${sign}${padded.slice(0, -decimals)}.${padded.slice(-decimals)}`;
+}
+```
+
+| Decimals | Input | SDK amount | Formatted result | Rejected input |
+| -------- | ----- | ---------- | ---------------- | -------------- |
+| 0 | `"12"` | `12n` | `"12"` | `"12.1"` |
+| 6 | `"1.234567"` | `1_234_567n` | `"1.234567"` | `"1.2345678"` |
+| 7 | `"0.0000001"` | `1n` | `"0.0000001"` | `"0.00000001"` |
+
+For a six-decimal token, pass the matching token contract address and the
+parsed integer to an initialized `LinkoraClient` as follows.
+
+```ts
+const decimals = 6; // From this token contract's decimals() on the active network
+const amount = parseTokenAmount("1.234567", decimals);
+const txXdr = await client.prepareTipTx(tipperAddress, 42n, tokenContractId, amount);
+// Pass txXdr to the wallet for signing.
+
+// Given a TipRecord for the same token, format its bigint fields for display.
+const gross = formatTokenAmount(tip.amount, decimals);
+const fee = formatTokenAmount(tip.fee, decimals);
+const payout = formatTokenAmount(tip.amount - tip.fee, decimals);
+```
+
+Keep the token identity with the amount so reads use the original precision.
+For verification, parsing each formatted result in the table yields the
+original `bigint`. The contract fee uses integer division and rounds down to
+a whole base unit. The input parser rejects excess precision before any fee
+calculation.
+
+---
+
 ## TipClient
 
 Tipping operations are exposed directly on `LinkoraClient`. The protocol charges a fee in basis points (bps) on every tip, deducted from the tip amount before the remainder reaches the post author.
