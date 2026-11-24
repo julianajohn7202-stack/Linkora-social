@@ -1,6 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useState, useRef } from "react";
+import { FormEvent, useEffect, useId, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { HighlightedSearchMatch, type SearchDropdownResult } from "./SearchResults";
 import { validateSearchQuery } from "@/lib/validate";
 import { useSearchSuggestions, SearchSuggestion } from "@/hooks/useSearchSuggestions";
 import { useRecentSearches } from "@/hooks/useRecentSearches";
@@ -25,6 +27,9 @@ export default function SearchBar({
   buttonLabel = "Search",
   inputRef: forwardedInputRef,
 }: SearchBarProps) {
+  const router = useRouter();
+  const listId = useId();
+  const [posts, setPosts] = useState<SearchDropdownResult[]>([]);
   const [query, setQuery] = useState(initialValue);
   const [isFocused, setIsFocused] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
@@ -68,6 +73,47 @@ export default function SearchBar({
     fetchSuggestions(query);
   }, [query, isFocused, fetchSuggestions, clearSuggestions]);
 
+  useEffect(() => {
+    setPosts([]);
+    const trimmed = query.trim();
+    if (!isFocused || trimmed.length < 2) return;
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const base = process.env.NEXT_PUBLIC_INDEXER_API_URL ?? "";
+        const path = base ? "/api/search/posts" : "/api/search";
+        const response = await fetch(`${base}${path}?q=${encodeURIComponent(trimmed)}&limit=5`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const { posts: hits } = await response.json() as { posts: { id: string; content: string }[] };
+        if (!controller.signal.aborted) {
+          setPosts(hits.slice(0, 5).map((post) => ({
+            type: "post",
+            value: String(post.id),
+            displayName: post.content,
+          })));
+        }
+      } catch {
+        // Post search is optional here. Profile suggestions can still be selected.
+      }
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [isFocused, query]);
+
+  const currentSuggestions: (SearchSuggestion | SearchDropdownResult)[] = query.trim()
+    ? [
+        ...suggestions.filter((item) => item.type === "profile"),
+        ...posts,
+        ...suggestions.filter((item) => item.type !== "profile"),
+      ]
+    : recentSearches.map((value: string) => ({ type: "recent", value }));
+  const activeSuggestion = isFocused ? currentSuggestions[activeSuggestionIndex] : undefined;
+
   // Handle click outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -87,7 +133,7 @@ export default function SearchBar({
   // Handle keyboard navigation
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
-      setQuery("");
+      e.preventDefault();
       setIsFocused(false);
       setActiveSuggestionIndex(-1);
       clearSuggestions();
@@ -95,11 +141,7 @@ export default function SearchBar({
       return;
     }
 
-    const currentSuggestions = query.trim()
-      ? suggestions
-      : recentSearches.map((s: string) => ({ type: "recent" as const, value: s }));
-
-    if (!currentSuggestions.length) return;
+    if (!isFocused || !currentSuggestions.length) return;
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -108,12 +150,11 @@ export default function SearchBar({
       );
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveSuggestionIndex((prev: number) => (prev > 0 ? prev - 1 : -1));
+      setActiveSuggestionIndex((prev) => prev <= 0 ? currentSuggestions.length - 1 : prev - 1);
     } else if (e.key === "Enter") {
-      if (activeSuggestionIndex >= 0) {
+      if (activeSuggestion) {
         e.preventDefault();
-        const selected = currentSuggestions[activeSuggestionIndex];
-        handleSuggestionClick(selected);
+        handleSuggestionClick(activeSuggestion);
       }
     }
   };
@@ -130,9 +171,16 @@ export default function SearchBar({
     setActiveSuggestionIndex(-1);
   };
 
-  const handleSuggestionClick = (suggestion: SearchSuggestion) => {
-    const searchValue =
-      suggestion.type === "profile" ? suggestion.displayName || suggestion.value : suggestion.value;
+  const handleSuggestionClick = (suggestion: SearchSuggestion | SearchDropdownResult) => {
+    setIsFocused(false);
+    setActiveSuggestionIndex(-1);
+    if (suggestion.type === "profile" || suggestion.type === "post") {
+      if (query.trim()) addRecentSearch(query.trim());
+      const route = suggestion.type === "profile" ? "/profile" : "/posts";
+      router.push(`${route}/${encodeURIComponent(suggestion.value)}`);
+      return;
+    }
+    const searchValue = suggestion.value;
     setQuery(searchValue);
     addRecentSearch(searchValue);
     onSearch(searchValue);
@@ -145,29 +193,7 @@ export default function SearchBar({
     removeRecentSearch(searchQuery);
   };
 
-  // Highlight matching text
-  const highlightMatch = (text: string, search: string) => {
-    if (!search.trim()) return text;
-
-    const regex = new RegExp(`(${search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
-    const parts = text.split(regex);
-
-    return parts.map((part, index) =>
-      regex.test(part) ? (
-        <mark key={index} className="bg-violet-500/30 text-[var(--foreground)] font-semibold">
-          {part}
-        </mark>
-      ) : (
-        part
-      )
-    );
-  };
-
-  const showDropdown =
-    isFocused && (query.trim() ? suggestions.length > 0 || loading : recentSearches.length > 0);
-  const currentSuggestions = query.trim()
-    ? suggestions
-    : recentSearches.map((s: string) => ({ type: "recent" as const, value: s }));
+  const showDropdown = isFocused && (currentSuggestions.length > 0 || (query.trim() && loading));
 
   return (
     <div className={`relative ${className}`}>
@@ -180,16 +206,17 @@ export default function SearchBar({
             onChange={(e) => {
               setIsFocused(true);
               setQuery(e.target.value);
+              setActiveSuggestionIndex(-1);
             }}
             onFocus={() => setIsFocused(true)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             aria-label={placeholder}
+            role="combobox"
             aria-autocomplete="list"
-            aria-controls="search-suggestions"
-            aria-activedescendant={
-              activeSuggestionIndex >= 0 ? `suggestion-${activeSuggestionIndex}` : undefined
-            }
+            aria-expanded={Boolean(showDropdown)}
+            aria-controls={showDropdown ? listId : undefined}
+            aria-activedescendant={activeSuggestion ? `${listId}-${activeSuggestionIndex}` : undefined}
             className={`w-full rounded-lg border border-[var(--border)] bg-[var(--muted)] px-3 md:px-4 py-2 pr-20 md:pr-24 text-[var(--foreground)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-violet-500 ${inputClassName}`}
           />
           <button
@@ -206,7 +233,7 @@ export default function SearchBar({
       {showDropdown && (
         <div
           ref={dropdownRef}
-          id="search-suggestions"
+          id={listId}
           role="listbox"
           className="absolute z-50 mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-lg max-h-80 overflow-y-auto"
         >
@@ -255,10 +282,10 @@ export default function SearchBar({
             </div>
           )}
 
-          {currentSuggestions.map((suggestion: SearchSuggestion, index: number) => (
+          {currentSuggestions.map((suggestion, index) => (
             <button
               key={`${suggestion.type}-${suggestion.value}-${index}`}
-              id={`suggestion-${index}`}
+              id={`${listId}-${index}`}
               role="option"
               aria-selected={index === activeSuggestionIndex}
               type="button"
@@ -303,11 +330,14 @@ export default function SearchBar({
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-[var(--foreground)] truncate">
                   {query.trim() && suggestion.type !== "recent"
-                    ? highlightMatch(suggestion.displayName || suggestion.value, query)
+                    ? <HighlightedSearchMatch text={suggestion.displayName || suggestion.value} query={query} />
                     : suggestion.displayName || suggestion.value}
                 </div>
                 {suggestion.type === "profile" && (
                   <div className="text-xs text-[var(--text-muted)] truncate">Profile</div>
+                )}
+                {suggestion.type === "post" && (
+                  <div className="text-xs text-[var(--text-muted)]">Post</div>
                 )}
                 {suggestion.type === "hashtag" && (
                   <div className="text-xs text-[var(--text-muted)]">Hashtag</div>
