@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Post,
@@ -11,6 +11,7 @@ import {
 } from "@/components/PostCard";
 import { Profile, ProfileCard } from "@/components/ProfileCard";
 import SearchBar from "@/components/SearchBar";
+import { useSearch } from "@/hooks/useSearch";
 
 type Tab = "posts" | "profiles";
 type Sort = "relevance" | "recent" | "most_tipped";
@@ -38,26 +39,6 @@ function toDateEnd(value: string): number | null {
   return Number.isNaN(time) ? null : time;
 }
 
-function readPosts(data: unknown): Post[] {
-  if (Array.isArray(data)) return data as Post[];
-  if (data && typeof data === "object" && Array.isArray((data as { posts?: unknown }).posts)) {
-    return (data as { posts: Post[] }).posts;
-  }
-  return [];
-}
-
-function readProfiles(data: unknown): Profile[] {
-  if (Array.isArray(data)) return data as Profile[];
-  if (
-    data &&
-    typeof data === "object" &&
-    Array.isArray((data as { profiles?: unknown }).profiles)
-  ) {
-    return (data as { profiles: Profile[] }).profiles;
-  }
-  return [];
-}
-
 export function SearchPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -68,10 +49,19 @@ export function SearchPageClient() {
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
 
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { results, isLoading: loading, error, search, clearResults } = useSearch<Post | Profile>({
+    endpoint: activeTab === "profiles" ? "/api/profiles/search" :
+      INDEXER_API_URL ? "/api/search/posts" : "/api/search",
+    resultKey: activeTab,
+  });
+
+  useEffect(() => {
+    search(query);
+    return clearResults;
+  }, [clearResults, query, search]);
+
+  const posts = activeTab === "posts" ? results as Post[] : [];
+  const profiles = activeTab === "profiles" ? results as Profile[] : [];
 
   const updateParams = (updates: Record<string, string>) => {
     const next = new URLSearchParams(searchParams.toString());
@@ -91,49 +81,6 @@ export function SearchPageClient() {
     next.delete("to");
     router.push(`/search?${next.toString()}`);
   };
-
-  useEffect(() => {
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setPosts([]);
-      setProfiles([]);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    const path = activeTab === "profiles" ? "/api/profiles/search" : "/api/search";
-
-    setLoading(true);
-    setError(null);
-
-    fetch(`${INDEXER_API_URL}${path}?q=${encodeURIComponent(trimmed)}`, {
-      signal: controller.signal,
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error("Search request failed.");
-        return response.json();
-      })
-      .then((data) => {
-        if (activeTab === "profiles") {
-          setProfiles(readProfiles(data));
-        } else {
-          setPosts(readPosts(data));
-        }
-      })
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setError(err instanceof Error ? err.message : "Search request failed.");
-        if (activeTab === "profiles") setProfiles([]);
-        else setPosts([]);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [activeTab, query]);
 
   const visiblePosts = useMemo(() => {
     const fromTime = toDateStart(from);
@@ -271,7 +218,7 @@ export function SearchPageClient() {
           {!loading &&
             !error &&
             hasProfileResults &&
-            profiles.map((profile) => <ProfileCard key={profile.address} profile={profile} query={query} />)}
+            profiles.map((profile) => <ProfileCard key={profile.address} profile={profile} />)}
           {!loading && !error && !hasProfileResults && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--muted)] p-8 text-center text-[var(--text-muted)]">
               No profiles found for &quot;{query}&quot;.
