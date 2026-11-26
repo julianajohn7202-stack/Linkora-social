@@ -1465,3 +1465,53 @@ The reverse index `BlockedBy` is used by the indexer and UI to efficiently enume
 | -------------- | -------------------- | ------ | ------------------------ |
 | `BlockEvent`   | `blocker`, `blocked` | —      | `block_user` succeeds.   |
 | `UnblockEvent` | `blocker`, `blocked` | —      | `unblock_user` succeeds. |
+
+---
+
+## Cross-Language Event Fixtures & Decoding
+
+To ensure that Rust contract tests and TypeScript/JavaScript SDK consumers agree on event topic and data serialization, cross-language fixtures capture representative contract event encodings.
+
+### Event Serialization Format
+
+Soroban contract events consist of:
+1. **Topics**: An array of `ScVal` topics. The first topic is always the event name symbol (e.g. `ProfileSetEvent`, `PoolCreatedEvent`, or `PoolDepositEvent`). Subsequent topics represent indexed fields (e.g. address or ID).
+2. **Data**: An `ScVal` representing the payload fields (or a map/tuple of payload values).
+
+When events are ingested by the Linkora SDK, `parseContractEvent` decodes the raw event and normalizes it into typed domain events (`ProfileSetEvent`, `PoolCreatedEvent`, `PoolDepositEvent`, etc.).
+
+### Representative Event Fixture Schema
+
+Cross-language test fixtures are maintained in `packages/sdk/src/__tests__/fixtures/events.fixture.json`. The fixture contains representative topic and value encodings matching the Rust contract test emissions:
+
+- **`profile_event`** (`ProfileSetEvent`):
+  - Topics: `["ProfileSetEvent"]`
+  - Data: `{ "user": "GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS", "username": "alice_test" }`
+  - Normalized type: `profile_set`
+  - Fields: `user`, `username`
+
+- **`pool_created_event`** (`PoolCreatedEvent`):
+  - Topics: `["PoolCreatedEvent"]`
+  - Data: `{ "pool_id": "community_pool", "token": "CBIELTK6YBZJU5UP2WWQEUCYJLPU6QXNGBMXPO5YB7UHQZ2OU7O5EBEO", "admins": ["GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS"], "threshold": 1 }`
+  - Normalized type: `pool_created`
+  - Fields: `pool_id`, `token`, `admins`, `threshold`
+
+- **`pool_deposit_event`** (`PoolDepositEvent`):
+  - Topics: `["PoolDepositEvent"]`
+  - Data: `{ "depositor": "GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS", "pool_id": "community_pool", "amount": "10000" }`
+  - Normalized type: `pool_deposit`
+  - Fields: `depositor`, `pool_id`, `amount`
+
+### Reproducible Fixture Regeneration
+
+To regenerate or verify the cross-language fixtures from contract tests:
+
+1. **Emit Contract Event in Rust Test**:
+   Execute a contract action (e.g. `client.set_profile` or `client.create_pool`) in `packages/contracts/contracts/linkora-contracts/src/test.rs`.
+2. **Inspect Emitted Event**:
+   Extract the event topics and data from `env.events().all()`.
+3. **Export to Fixture**:
+   Update `packages/sdk/src/__tests__/fixtures/events.fixture.json` with the representative payload structure.
+4. **Run SDK Decoder Test**:
+   The decoder test in `packages/sdk/src/__tests__/events.test.ts` imports the fixture, runs `parseContractEvent`, and validates that all fields round-trip with matching values.
+
