@@ -10,6 +10,7 @@ mod errors;
 mod moderation;
 mod reputation;
 mod rewards;
+pub mod storage_keys;
 mod validation;
 
 pub use errors::{ContractError, RentError};
