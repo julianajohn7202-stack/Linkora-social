@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BlurhashImage } from "@/components/BlurhashImage";
+import { MediaGallery } from "@/components/media/MediaGallery";
 
 export interface Post {
   id: string | number;
@@ -12,13 +13,18 @@ export interface Post {
   like_count?: string | number;
   timestamp?: string | number;
   created_at?: string;
-  /** URL of an attached image. */
+  /** URL of an attached image (single-image legacy field). */
   imageUrl?: string;
   /**
    * Blurhash string for the attached image.
    * Shown as a canvas placeholder while the image loads (no CLS).
    */
   blurhash?: string;
+  /**
+   * Multiple media attachments. When present, rendered via MediaGallery
+   * instead of the single imageUrl field.
+   */
+  mediaUrls?: Array<{ url: string; blurhash?: string }>;
 }
 
 interface PostCardProps {
@@ -132,8 +138,12 @@ export function PostCard({
         {highlightText(post.content, query)}
       </p>
 
-      {/* Attached image with blurhash placeholder */}
-      {post.imageUrl && (
+      {/* Media attachments: gallery for multiple, single image for legacy field */}
+      {post.mediaUrls && post.mediaUrls.length > 0 ? (
+        <div className="mb-4">
+          <MediaGallery items={post.mediaUrls} />
+        </div>
+      ) : post.imageUrl ? (
         <BlurhashImage
           src={post.imageUrl}
           alt="Post image"
@@ -143,7 +153,7 @@ export function PostCard({
           wrapperClassName="mb-4 rounded-lg overflow-hidden"
           className="rounded-lg"
         />
-      )}
+      ) : null}
 
       <div
         className="flex items-center gap-6 border-t border-[var(--border)]/40 pt-3"
