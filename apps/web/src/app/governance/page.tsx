@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useWalletContext } from "@/components/WalletProvider";
 import { LinkoraClient, GovParameter, GovProposal, GovStatus } from "linkora-sdk";
@@ -16,6 +16,7 @@ const NETWORK_PASSPHRASE =
 type ProposalWithQuorum = GovProposal & { effectiveQuorum: number };
 const GOVERNANCE_PARAMETERS = Object.values(GovParameter) as GovParameter[];
 const PAGE_SIZE = 10;
+const POLL_INTERVAL_MS = 30_000;
 
 const ALLOW_LOCAL_HTTP =
   RPC_URL.startsWith("http://localhost:") || RPC_URL.startsWith("http://127.0.0.1:");
@@ -43,17 +44,19 @@ export default function GovernancePage() {
   const [isVoting, setIsVoting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const fetchProposals = async (targetPage: number = 1) => {
-    if (!CONTRACT_ID) return;
-    setLoading(true);
+  const loadedPage = useRef(1);
+  const requestInProgress = useRef(false);
+
+  const fetchProposals = useCallback(async (targetPage = 1, refresh = false) => {
+    if (!CONTRACT_ID || requestInProgress.current) return;
+    requestInProgress.current = true;
+    if (!refresh) setLoading(true);
     setFetchError(null);
     try {
       const fetched: ProposalWithQuorum[] = [];
-      // Bounded page scan: fetch at most PAGE_SIZE proposals per request instead
-      // of scanning forever with while(true). "End of list" is detected by an id
-      // lookup failure, but only ever advances one page at a time.
-      const startId = (targetPage - 1) * PAGE_SIZE + 1;
-      const endId = startId + PAGE_SIZE - 1;
+      // Refresh the loaded pages so status changes also reach the history tab.
+      const startId = refresh ? 1 : (targetPage - 1) * PAGE_SIZE + 1;
+      const endId = targetPage * PAGE_SIZE;
       let foundAny = false;
       for (let n = startId; n <= endId; n++) {
         const id = BigInt(n);
@@ -68,7 +71,7 @@ export default function GovernancePage() {
         }
       }
       setProposals((prev) => {
-        const combined = targetPage === 1 ? fetched : [...prev, ...fetched];
+        const combined = refresh || targetPage === 1 ? fetched : [...prev, ...fetched];
         const seen = new Set<string>();
         return combined.filter((p) => {
           const key = (p as { id?: { toString?: () => string } }).id?.toString?.() ?? "";
@@ -77,21 +80,64 @@ export default function GovernancePage() {
           return true;
         });
       });
-      const reachedEnd = fetched.length < PAGE_SIZE;
+      const reachedEnd = fetched.length < endId - startId + 1;
       setHasMore(foundAny && !reachedEnd);
-      setPage(targetPage);
+      loadedPage.current = refresh
+        ? Math.max(1, Math.ceil(fetched.length / PAGE_SIZE))
+        : targetPage;
+      setPage(loadedPage.current);
     } catch (e) {
       // A transient RPC failure should not wipe the already-loaded list. Surface
       // it so the boundary can render feedback while keeping existing proposals.
       setFetchError(e instanceof Error ? e.message : "Failed to fetch proposals");
     } finally {
+      requestInProgress.current = false;
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchProposals(1);
-  }, []);
+    if (!CONTRACT_ID) return;
+    let interval: number | undefined;
+
+    function stopPolling() {
+      window.clearInterval(interval);
+      interval = undefined;
+    }
+
+    function refresh() {
+      if (!document.hidden) void fetchProposals(loadedPage.current, true);
+    }
+
+    function syncPolling() {
+      if (document.hidden) {
+        stopPolling();
+      } else if (interval === undefined) {
+        refresh();
+        interval = window.setInterval(refresh, POLL_INTERVAL_MS);
+      }
+    }
+
+    // Visibility handles tab switches. Focus can also return to a visible window.
+    function handleFocus() {
+      if (!document.hidden && interval === undefined) syncPolling();
+    }
+
+    function handleBlur() {
+      stopPolling();
+    }
+
+    syncPolling();
+    document.addEventListener("visibilitychange", syncPolling);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", syncPolling);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [fetchProposals]);
 
   const handlePropose = async (e: React.FormEvent) => {
     e.preventDefault();
