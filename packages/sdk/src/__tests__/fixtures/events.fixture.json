@@ -1,0 +1,47 @@
+{
+  "profile_event": {
+    "name": "ProfileSetEvent",
+    "topics": ["ProfileSetEvent"],
+    "data": {
+      "user": "GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS",
+      "username": "alice_test"
+    },
+    "expected": {
+      "type": "profile_set",
+      "user": "GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS",
+      "username": "alice_test"
+    }
+  },
+  "pool_created_event": {
+    "name": "PoolCreatedEvent",
+    "topics": ["PoolCreatedEvent"],
+    "data": {
+      "pool_id": "community_pool",
+      "token": "CBIELTK6YBZJU5UP2WWQEUCYJLPU6QXNGBMXPO5YB7UHQZ2OU7O5EBEO",
+      "admins": ["GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS"],
+      "threshold": 1
+    },
+    "expected": {
+      "type": "pool_created",
+      "pool_id": "community_pool",
+      "token": "CBIELTK6YBZJU5UP2WWQEUCYJLPU6QXNGBMXPO5YB7UHQZ2OU7O5EBEO",
+      "admins": ["GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS"],
+      "threshold": 1
+    }
+  },
+  "pool_deposit_event": {
+    "name": "PoolDepositEvent",
+    "topics": ["PoolDepositEvent"],
+    "data": {
+      "depositor": "GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS",
+      "pool_id": "community_pool",
+      "amount": "10000"
+    },
+    "expected": {
+      "type": "pool_deposit",
+      "depositor": "GBZXN7PIRZGNMHGA728YVUKDXSDJ6GHWULQKDT6XY2DDW2DY7AWWUTBS",
+      "pool_id": "community_pool",
+      "amount": "10000"
+    }
+  }
+}

@@ -337,6 +337,47 @@ describe("parseContractEvent", () => {
     }
   });
 
+  it("decodes cross-language event fixtures for profile and pool events with matching fields", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fixtureData = require("./fixtures/events.fixture.json");
+
+    // 1. Profile event round-trip
+    const profileRaw = rawEvent({
+      topics: fixtureData.profile_event.topics.map(enc),
+      data: enc(fixtureData.profile_event.data),
+    });
+    const parsedProfile = parseContractEvent(profileRaw) as Extract<LinkoraEvent, { type: "profile_set" }>;
+    expect(parsedProfile).not.toBeNull();
+    expect(parsedProfile.type).toBe(fixtureData.profile_event.expected.type);
+    expect(parsedProfile.user).toBe(fixtureData.profile_event.expected.user);
+    expect(parsedProfile.username).toBe(fixtureData.profile_event.expected.username);
+
+    // 2. Pool created event round-trip
+    const poolCreatedRaw = rawEvent({
+      topics: fixtureData.pool_created_event.topics.map(enc),
+      data: enc(fixtureData.pool_created_event.data),
+    });
+    const parsedPoolCreated = parseContractEvent(poolCreatedRaw) as Extract<LinkoraEvent, { type: "pool_created" }>;
+    expect(parsedPoolCreated).not.toBeNull();
+    expect(parsedPoolCreated.type).toBe(fixtureData.pool_created_event.expected.type);
+    expect(parsedPoolCreated.pool_id).toBe(fixtureData.pool_created_event.expected.pool_id);
+    expect(parsedPoolCreated.token).toBe(fixtureData.pool_created_event.expected.token);
+    expect(parsedPoolCreated.admins).toEqual(fixtureData.pool_created_event.expected.admins);
+    expect(parsedPoolCreated.threshold).toBe(fixtureData.pool_created_event.expected.threshold);
+
+    // 3. Pool deposit event round-trip
+    const poolDepositRaw = rawEvent({
+      topics: fixtureData.pool_deposit_event.topics.map(enc),
+      data: enc(fixtureData.pool_deposit_event.data),
+    });
+    const parsedPoolDeposit = parseContractEvent(poolDepositRaw) as Extract<LinkoraEvent, { type: "pool_deposit" }>;
+    expect(parsedPoolDeposit).not.toBeNull();
+    expect(parsedPoolDeposit.type).toBe(fixtureData.pool_deposit_event.expected.type);
+    expect(parsedPoolDeposit.depositor).toBe(fixtureData.pool_deposit_event.expected.depositor);
+    expect(parsedPoolDeposit.pool_id).toBe(fixtureData.pool_deposit_event.expected.pool_id);
+    expect(parsedPoolDeposit.amount).toBe(BigInt(fixtureData.pool_deposit_event.expected.amount));
+  });
+
   // ── Acceptance criterion: null for unknown / malformed events ────────────
 
   it("returns null for an unknown event type without throwing", () => {
