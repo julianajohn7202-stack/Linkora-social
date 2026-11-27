@@ -9,14 +9,15 @@
 
 ## Quick links
 
-| Section                               | Contents                                                                   |
-| ------------------------------------- | -------------------------------------------------------------------------- |
-| [Design tokens](#design-tokens)       | Color, type, spacing, and shadow variables                                 |
-| [Atoms](#atoms)                       | Button, Input, Textarea, Badge, Avatar, Spinner, Icon                      |
-| [Molecules](#molecules)               | Post card, Profile card, Pool card, Transaction status, Toast, Modal shell |
-| [Organisms](#organisms)               | Feed list, Navigation bar, Wallet connect header, Tip modal, Compose modal |
-| [Dark mode](#dark-mode)               | Token overrides for `data-theme="dark"`                                    |
-| [Do/Don't examples](#dodont-examples) | Usage guidance per component                                               |
+| Section                                  | Contents                                                                   |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| [Design tokens](#design-tokens)          | Color, type, spacing, and shadow variables                                 |
+| [Token synchronization](./TOKEN_SYNC.md) | How to propagate a token change across web, mobile and JSON sources        |
+| [Atoms](#atoms)                          | Button, Input, Textarea, Badge, Avatar, Spinner, Icon                      |
+| [Molecules](#molecules)                  | Post card, Profile card, Pool card, Transaction status, Toast, Modal shell |
+| [Organisms](#organisms)                  | Feed list, Navigation bar, Wallet connect header, Tip modal, Compose modal |
+| [Dark mode](#dark-mode)                  | Token overrides for `data-theme="dark"`                                    |
+| [Do/Don't examples](#dodont-examples)    | Usage guidance per component                                               |
 
 ---
 
