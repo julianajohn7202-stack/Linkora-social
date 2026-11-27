@@ -1,12 +1,14 @@
 import express, { type Application, Request, Response } from "express";
 import helmet from "helmet";
 import sharp from "sharp";
+import { uploadMedia } from "./upload";
 
 const PORT = parseInt(process.env.PORT ?? "3003", 10);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
 const app: Application = express();
 app.use(helmet());
+app.post("/upload", uploadMedia);
 
 // ── Health endpoint ────────────────────────────────────────────────────────
 app.get("/health", (_req: Request, res: Response) => {

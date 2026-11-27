@@ -1,11 +1,33 @@
 # Media Service
 
-The upload API is also embedded inside the **indexer** (`services/indexer`). The
-standalone media service in this directory handles image processing and is
-configured independently through `services/media/.env.example`. It
-exposes two HTTP endpoints under `/api/posts/media` that handle file uploads,
-serve previously-uploaded files, and report the server's upload budget to
-clients.
+The standalone media service handles image processing and object storage.
+The indexer also exposes a legacy local-disk upload API described below.
+
+## Web API `POST /api/media`
+
+Send one multipart file named `file`. JPEG, PNG, WebP, and GIF files up to
+10 MiB are accepted. The web server verifies Stellar authorization before
+forwarding the request stream. The media service checks the file digest,
+declared MIME type, and image bytes before streaming the original to S3 or R2.
+
+Send `X-Media-SHA256` with the lowercase hexadecimal SHA-256 of the original
+file bytes. Build the `StellarSig` header using the shared `buildAuthMessage`
+format with method `POST`, path `/api/media`, the wallet address, the current
+timestamp in milliseconds, and the same digest as `bodyHash`. Sign the
+SHA-256 of that message and send the Base64-encoded signature in the usual
+`StellarSig` envelope. Generate a fresh signature for each attempt.
+
+Success returns HTTP 201 with `{ url, blurhash, width, height }`. Invalid
+credentials return 401, oversized files return 413, and unsupported or
+mismatched image types return 415.
+
+Set `MEDIA_SERVICE_URL` in the web server, and set the same
+`MEDIA_UPLOAD_TOKEN` in the web server and media service. Configure
+`MEDIA_BUCKET` and `CDN_BASE_URL` in the media service. For AWS, set
+`MEDIA_REGION` to the bucket region and use the SDK credential chain or
+`MEDIA_ACCESS_KEY` and `MEDIA_SECRET_KEY`. For R2, set `MEDIA_ENDPOINT` to
+the account's S3 endpoint and provide the R2 access and secret keys.
+`CDN_BASE_URL` must serve the bucket's uploaded objects.
 
 ---
 
@@ -35,8 +57,8 @@ clients.
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Next.js API layer  (apps/web)                                              │
 │                                                                             │
-│  No dedicated Next.js API route for media — the fetch calls hit the         │
-│  indexer directly via NEXT_PUBLIC_INDEXER_URL.                              │
+│  Legacy composer fetch calls hit the indexer directly via                  │
+│  NEXT_PUBLIC_INDEXER_URL.                                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
                                │
                                ▼

@@ -29,6 +29,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/mobile/package.json apps/mobile/
 COPY apps/web/package.json apps/web/
+COPY packages/analytics/package.json packages/analytics/
+COPY packages/reputation/package.json packages/reputation/
 COPY packages/codegen/package.json packages/codegen/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/sdk/package.json packages/sdk/
@@ -37,6 +39,8 @@ COPY services/analytics-oracle/package.json services/analytics-oracle/
 COPY services/dm-relay/package.json services/dm-relay/
 COPY services/indexer/package.json services/indexer/
 COPY services/media/package.json services/media/
+COPY services/notification/package.json services/notification/
+COPY services/search/package.json services/search/
 
 # sharp will compile its native bindings against the libvips headers installed above.
 RUN pnpm install --frozen-lockfile --filter "@linkora/media..."
