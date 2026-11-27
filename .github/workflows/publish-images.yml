@@ -145,6 +145,7 @@ jobs:
           fi
 
       - name: Build and push multi-platform Docker image
+        id: build
         if: steps.digest_check.outputs.status == 'absent'
         uses: docker/build-push-action@v7
         with:
@@ -155,6 +156,45 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify registry manifest architecture coverage
+        if: steps.digest_check.outputs.status == 'absent'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.service.image_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REQUIRED_PLATFORMS: ${{ matrix.service.platforms }}
+        run: |
+          manifest=$(docker buildx imagetools inspect --raw "${IMAGE,,}@$DIGEST")
+          platforms=$(jq -r '
+            (.manifests // [])[]
+            | select(.platform.os and .platform.architecture)
+            | select(.platform.os != "unknown" and .platform.architecture != "unknown")
+            | "\(.platform.os)/\(.platform.architecture)"
+          ' <<< "$manifest" | sort -u)
+          printf '### %s manifest\n\n%s\n' "$IMAGE" "$platforms" >> "$GITHUB_STEP_SUMMARY"
+          IFS=, read -ra required <<< "$REQUIRED_PLATFORMS"
+          missing=0
+          for platform in "${required[@]}"; do
+            if ! grep -Fxq -- "$platform" <<< "$platforms"; then
+              echo "::error::$IMAGE@$DIGEST is missing $platform"
+              echo "- Missing required platform: $platform" >> "$GITHUB_STEP_SUMMARY"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Publish verified release tags
+        if: steps.digest_check.outputs.status == 'absent'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.service.image_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          args=()
+          while IFS= read -r tag; do
+            args+=(--tag "$tag")
+          done <<< "$TAGS"
+          docker buildx imagetools create "${args[@]}" "${IMAGE,,}@$DIGEST"
 
       # ── Record per-image completion for the summary job ──────────────────
       - name: Record completion status
