@@ -9467,3 +9467,106 @@ fn test_dm_public_key_replacement_getter_and_event_fixtures() {
     assert_eq!(client.get_dm_key(&user), Some(key_fixture_2));
 }
 
+// ── Issue #614: Check author post pagination after a deletion ─────────────────
+
+#[test]
+fn test_author_post_pagination_across_pages_before_and_after_deletion() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _) = setup_contract(&env);
+
+    let author = Address::generate(&env);
+
+    // Create 15 posts (3 pages of 5 posts each)
+    let mut post_ids = std::vec::Vec::new();
+    for i in 0..15 {
+        let content = String::from_str(&env, &alloc::format!("post content {i}"));
+        let id = client.create_post(&author, &content);
+        post_ids.push(id);
+    }
+    assert_eq!(post_ids.len(), 15);
+
+    let page_size = 5u32;
+
+    // ── Pre-deletion verification across several pages ──
+    // Page 0 (offset 0, limit 5): items 0..5
+    let page_0_before = client.get_posts_by_author(&author, &0, &page_size);
+    assert_eq!(page_0_before.len(), 5);
+    for i in 0..5 {
+        assert_eq!(page_0_before.get(i as u32).unwrap(), post_ids[i]);
+    }
+
+    // Page 1 (offset 5, limit 5): items 5..10
+    let page_1_before = client.get_posts_by_author(&author, &5, &page_size);
+    assert_eq!(page_1_before.len(), 5);
+    for i in 0..5 {
+        assert_eq!(page_1_before.get(i as u32).unwrap(), post_ids[5 + i]);
+    }
+
+    // Page 2 (offset 10, limit 5): items 10..15
+    let page_2_before = client.get_posts_by_author(&author, &10, &page_size);
+    assert_eq!(page_2_before.len(), 5);
+    for i in 0..5 {
+        assert_eq!(page_2_before.get(i as u32).unwrap(), post_ids[10 + i]);
+    }
+
+    // Acceptance criterion: An offset after the final page returns an empty vector
+    let offset_at_end_before = client.get_posts_by_author(&author, &15, &page_size);
+    assert_eq!(offset_at_end_before.len(), 0);
+    assert!(offset_at_end_before.is_empty());
+
+    let offset_beyond_end_before = client.get_posts_by_author(&author, &30, &page_size);
+    assert_eq!(offset_beyond_end_before.len(), 0);
+    assert!(offset_beyond_end_before.is_empty());
+
+    // ── Delete a middle post ──
+    // Middle post: index 7 (in the middle of page 1, originally post_ids[7])
+    let deleted_index = 7usize;
+    let deleted_post_id = post_ids[deleted_index];
+    client.delete_post(&author, &deleted_post_id);
+
+    // Verify post is deleted
+    assert!(client.get_post(&deleted_post_id).is_none());
+
+    // Build the expected post list after deletion (14 items remaining, preserving order)
+    let mut expected_post_ids = post_ids.clone();
+    expected_post_ids.remove(deleted_index);
+    assert_eq!(expected_post_ids.len(), 14);
+
+    // ── Post-deletion verification across several pages ──
+    // Acceptance criterion: Results match documented ordering and deletion semantics
+    // Page 0 (offset 0, limit 5): items 0..5 of remaining (unchanged)
+    let page_0_after = client.get_posts_by_author(&author, &0, &page_size);
+    assert_eq!(page_0_after.len(), 5);
+    for i in 0..5 {
+        assert_eq!(page_0_after.get(i as u32).unwrap(), expected_post_ids[i]);
+    }
+
+    // Page 1 (offset 5, limit 5): items 5..10 of remaining (item 7 was removed, items shifted)
+    let page_1_after = client.get_posts_by_author(&author, &5, &page_size);
+    assert_eq!(page_1_after.len(), 5);
+    for i in 0..5 {
+        assert_eq!(page_1_after.get(i as u32).unwrap(), expected_post_ids[5 + i]);
+    }
+    // Verify deleted post is not present in page 1
+    for i in 0..page_1_after.len() {
+        assert_ne!(page_1_after.get(i).unwrap(), deleted_post_id);
+    }
+
+    // Page 2 (offset 10, limit 5): items 10..14 of remaining (now has 4 items)
+    let page_2_after = client.get_posts_by_author(&author, &10, &page_size);
+    assert_eq!(page_2_after.len(), 4);
+    for i in 0..4 {
+        assert_eq!(page_2_after.get(i as u32).unwrap(), expected_post_ids[10 + i]);
+    }
+
+    // Acceptance criterion: An offset after the final page returns an empty vector
+    let offset_at_end_after = client.get_posts_by_author(&author, &14, &page_size);
+    assert_eq!(offset_at_end_after.len(), 0);
+    assert!(offset_at_end_after.is_empty());
+
+    let offset_beyond_end_after = client.get_posts_by_author(&author, &20, &page_size);
+    assert_eq!(offset_beyond_end_after.len(), 0);
+    assert!(offset_beyond_end_after.is_empty());
+}
+
