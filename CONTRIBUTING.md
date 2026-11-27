@@ -207,3 +207,79 @@ bash tests/migrations/test-migrations.sh
 
 All tests must pass locally before opening a PR. CI will re-run them on every
 push to a PR branch and on every push to `main`.
+
+### Local web E2E fixtures
+
+The [fixture server](apps/web/e2e-mocks/server.js) serves mock indexer endpoints
+on port 3001 and mock Soroban RPC on port 8000. Use it with the built Next.js
+app, as in the [frontend E2E workflow](.github/workflows/frontend-e2e.yml).
+Keep ports 3000, 3001, and 8000 free before starting.
+
+From the repository root, after installing workspace dependencies, start the
+fixture server in one terminal.
+
+```bash
+node apps/web/e2e-mocks/server.js
+```
+
+In a second terminal at the repository root, install Chromium, build with the
+local fixture URLs, and run a single spec. Playwright starts the built web app
+on port 3000 according to [its configuration](apps/web/playwright.config.ts).
+
+```bash
+pnpm --filter apps-web exec playwright install chromium
+export NEXT_PUBLIC_API_URL=http://localhost:3001
+export NEXT_PUBLIC_INDEXER_URL=http://localhost:3001
+export NEXT_PUBLIC_INDEXER_API_URL=http://localhost:3001
+export NEXT_PUBLIC_SOROBAN_RPC_URL=http://localhost:8000/rpc
+export NEXT_PUBLIC_NETWORK_PASSPHRASE='Standalone Network ; February 2017'
+export NEXT_PUBLIC_CONTRACT_ID=CBQHLSNMBF4HS3UX2PV72T75V2SXE7M2EZZTQ6YC5DSXIGGY4NPSAFAF
+pnpm --filter apps-web build
+pnpm --filter apps-web test:e2e search-suggestions.spec.ts
+```
+
+To extend a scenario, put this example in its own spec under
+`apps/web/tests/e2e/` and pass that filename to `test:e2e`.
+[The shared wallet helper](apps/web/tests/e2e/test-utils.ts) seeds a connected
+test address and completed onboarding before navigation. Each Playwright test
+gets its own page and browser context. Keep route overrides and response data
+within that test so parallel workers can continue to use the shared server.
+
+```ts
+import { expect, test } from "@playwright/test";
+import { injectWalletMock, MOCK_ADDRESS } from "./test-utils";
+
+test("clears profile suggestions when a later lookup fails", async ({ page }) => {
+  await injectWalletMock(page);
+  await page.route(/\/api\/profiles\/search\?/, async (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q");
+    const headers = { "access-control-allow-origin": "*" };
+
+    if (query === "offline") {
+      await route.fulfill({ status: 503, headers, json: { error: "fixture unavailable" } });
+      return;
+    }
+
+    const profiles =
+      query === "fixture"
+        ? [{ address: MOCK_ADDRESS, username: "fixture", display_name: "Fixture Profile" }]
+        : [];
+    await route.fulfill({ status: 200, headers, json: { profiles } });
+  });
+
+  await page.goto("/");
+  const search = page.getByRole("search").first().locator("input");
+  const suggestion = page.locator("#search-suggestions").getByText("Fixture Profile");
+  await search.focus();
+  await search.fill("fixture");
+  await expect(suggestion).toBeVisible();
+
+  const failedLookup = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/profiles/search" && url.searchParams.get("q") === "offline";
+  });
+  await search.fill("offline");
+  expect((await failedLookup).status()).toBe(503);
+  await expect(suggestion).toBeHidden();
+});
+```
