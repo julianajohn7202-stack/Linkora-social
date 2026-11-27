@@ -25,3 +25,4 @@ export * from "./classic.js";
 export * from "./submit.js";
 export * from "./batch.js";
 export * from "./pagination.js";
+export * from "./governance-client.js";
