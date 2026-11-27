@@ -12,11 +12,14 @@ const CONTRACT_ID =
 export default function PostDetailPage() {
   const params = useParams();
   const postId = typeof params?.id === "string" ? params.id : null;
+  return <PostDetail key={postId} postId={postId} />;
+}
+
+function PostDetail({ postId }: { postId: string | null }) {
 
   const [post, setPost] = useState<Post | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(postId));
   const [error, setError] = useState<string | null>(null);
-  const [notFound, setNotFound] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
   const handleCopyLink = useCallback(async () => {
@@ -26,37 +29,31 @@ export default function PostDetailPage() {
   }, []);
 
   useEffect(() => {
-    if (!postId) {
-      setNotFound(true);
-      setLoading(false);
-      return;
-    }
+    if (!postId) return;
 
-    const client = new LinkoraClient({
-      rpcUrl: RPC_URL,
-      contractId: CONTRACT_ID,
-    });
+    let active = true;
 
-    setLoading(true);
-    setError(null);
-    setNotFound(false);
-
-    client
-      .getPost(BigInt(postId))
-      .then((postData: any) => {
-        if (postData) {
-          setPost(postData);
-        } else {
-          setNotFound(true);
-        }
-      })
-      .catch((err) => {
+    async function loadPost(id: string) {
+      try {
+        const client = new LinkoraClient({
+          rpcUrl: RPC_URL,
+          contractId: CONTRACT_ID,
+        });
+        const postData = await client.getPost(BigInt(id));
+        if (active) setPost(postData);
+      } catch (err) {
+        if (!active) return;
         console.error("Failed to fetch post:", err);
         setError(err instanceof Error ? err.message : "Failed to load post");
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void loadPost(postId);
+    return () => {
+      active = false;
+    };
   }, [postId]);
 
   if (loading) {
@@ -68,7 +65,7 @@ export default function PostDetailPage() {
     );
   }
 
-  if (notFound || error || !post) {
+  if (error || !post) {
     return (
       <main className="max-w-xl mx-auto px-4 py-12 flex flex-col gap-6 text-center">
         <div className="text-5xl" aria-hidden="true">🔍</div>
