@@ -1187,3 +1187,81 @@ search:
 - `REDIS_URL` is mandatory in production and must point at the same endpoint as
   all other services to share the rate-limit store.
 
+## 12. Release artifact provenance and verification
+
+Keep one record per artifact and deployed target in the deployment run or change
+record. For service images, the build sources are
+[Release — Docker Images](../.github/workflows/release-docker.yml) (Docker Hub
+indexer, DM relay and analytics oracle) and the
+[Publish Docker Images](../.github/workflows/publish-images.yml) and
+[Publish Services](../.github/workflows/publish-services.yml) workflows (GHCR
+notification, search and media). For the Linkora contract WASM, see
+[Deploy Testnet](../.github/workflows/deploy-testnet.yml) and
+[its deployment script](../scripts/deploy_testnet.sh).
+
+### Sample deployment records
+
+Replace the angle-bracket placeholders with values from the actual build and
+deployment. The image and WASM can have different source commits and build runs.
+
+```yaml
+- artifact: container-image
+  image: linkora/indexer
+  release_tag: v1.2.3
+  digest: "sha256:<registry-manifest-or-index-sha256>"
+  source_commit: "<full-image-build-checkout-sha>"
+  build_run: "https://github.com/<owner>/<repo>/actions/runs/<image-run-id>"
+  environment: production
+  deployed_target: "<kube-context>/<namespace>/deployment/linkora-indexer"
+
+- artifact: soroban-wasm
+  file: linkora_contracts.wasm
+  source_ref: release/v1.2.3
+  digest: "sha256:<wasm-file-sha256>"
+  source_commit: "<full-wasm-build-checkout-sha>"
+  build_run: "https://github.com/<owner>/<repo>/actions/runs/<deploy-run-id>"
+  environment: testnet
+  contract_id: "<deployed-Stellar-contract-ID>"
+```
+
+### Verify an image
+
+1. Open the publishing run for the image. Copy the run URL, the full commit
+   SHA used by the checkout step and the tag from the build-and-push step.
+   For manual publishes, use the checked-out commit shown in the run.
+2. Copy the pushed manifest or image-index digest from the build-and-push
+   output. Run `docker buildx imagetools inspect IMAGE@sha256:DIGEST` to
+   confirm that the registry serves it. Inspecting a tag shows where that tag
+   points now. For a multi-platform image, the top-level digest identifies
+   the index, and its manifest list identifies each platform digest. Where
+   available, compare the image's `org.opencontainers.image.revision` label
+   with the build checkout SHA.
+3. Copy the actual environment and target from the deployment record. In
+   Kubernetes, read the workload image reference and the running Pods'
+   `status.containerStatuses[].imageID` in that context and namespace. In
+   Compose, use `docker compose ps -q SERVICE` on the deployed host, then
+   inspect that container and its image's `RepoDigests`. Compare like
+   digests. A runtime can report a platform manifest or image config ID
+   while the deployment pins the index. Use the registry's manifest list
+   and platform manifest to trace those values to the recorded digest.
+
+### Verify Soroban WASM
+
+1. In the deployment run, copy the run URL, checkout SHA and triggering
+   ref. After the build and before upload, run
+   `sha256sum packages/contracts/contracts/linkora-contracts/target/wasm32v1-none/release/linkora_contracts.wasm`
+   from the repo root. Record the hash with the `sha256:` prefix and retain
+   the exact file or the hash in the deployment evidence. If deploying a
+   different build output, hash the file passed to `--wasm`.
+2. Copy `network` and `contract_id` from the run summary or the uploaded
+   `contract-id.json`. The deployment job's GitHub environment is
+   `production`, while its configured Stellar network is `testnet`. Use
+   the Stellar network as the WASM deployment environment in the record.
+   The current contract-ID artifact contains deployment metadata. Capture
+   the WASM hash separately at build time.
+3. On the recorded network, look up the contract instance by its ID in
+   Stellar RPC and read the WASM hash from its executable. Compare the hex
+   hash with the recorded file digest. For an upgraded contract, verify
+   against the record for the upgrade currently on-chain. If the script
+   was given an existing `CONTRACT_ID`, use that deployment’s provenance
+   record. The script skips the WASM build and deployment in that case.
