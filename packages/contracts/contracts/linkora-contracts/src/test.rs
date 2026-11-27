@@ -9682,3 +9682,187 @@ fn test_exercise_profile_cleanup_over_multiple_batches() {
     );
 }
 
+// ── Issue #615: Verify batch post cleanup state transitions ───────────────────
+
+#[test]
+fn test_verify_batch_post_cleanup_state_transitions_and_adjacent_posts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _) = setup_contract(&env);
+
+    let author = Address::generate(&env);
+    client.set_profile(
+        &author,
+        &String::from_str(&env, "author_user"),
+        &Address::generate(&env),
+    );
+
+    // ── Setup Adjacent Posts and Target Post ──
+    // Post 1: Adjacent post created before target post
+    let post_before_id = client.create_post(
+        &author,
+        &String::from_str(&env, "adjacent post before target"),
+    );
+
+    // Post 2: Target post to be deleted and cleaned up
+    let target_post_id = client.create_post(
+        &author,
+        &String::from_str(&env, "target post to be deleted"),
+    );
+
+    // Post 3: Adjacent post created after target post
+    let post_after_id = client.create_post(
+        &author,
+        &String::from_str(&env, "adjacent post after target"),
+    );
+
+    // Add likes to adjacent post 1 (2 likes)
+    let liker_adj1 = Address::generate(&env);
+    let liker_adj2 = Address::generate(&env);
+    client.set_profile(
+        &liker_adj1,
+        &String::from_str(&env, "adj_liker1"),
+        &Address::generate(&env),
+    );
+    client.set_profile(
+        &liker_adj2,
+        &String::from_str(&env, "adj_liker2"),
+        &Address::generate(&env),
+    );
+    client.like_post(&liker_adj1, &post_before_id);
+    client.like_post(&liker_adj2, &post_before_id);
+    assert_eq!(client.get_like_count(&post_before_id), 2);
+
+    // Add likes to adjacent post 3 (1 like)
+    let liker_adj3 = Address::generate(&env);
+    client.set_profile(
+        &liker_adj3,
+        &String::from_str(&env, "adj_liker3"),
+        &Address::generate(&env),
+    );
+    client.like_post(&liker_adj3, &post_after_id);
+    assert_eq!(client.get_like_count(&post_after_id), 1);
+
+    // Capture baseline metadata for adjacent posts
+    let post_before_meta = client.get_post(&post_before_id).unwrap();
+    let post_after_meta = client.get_post(&post_after_id).unwrap();
+    assert_eq!(post_before_meta.like_count, 2);
+    assert_eq!(post_after_meta.like_count, 1);
+
+    // Add 5 likes to target post
+    let mut target_likers = std::vec::Vec::new();
+    for i in 0..5 {
+        let liker = Address::generate(&env);
+        client.set_profile(
+            &liker,
+            &String::from_str(&env, &alloc::format!("tgt_liker_{i}")),
+            &Address::generate(&env),
+        );
+        client.like_post(&liker, &target_post_id);
+        target_likers.push(liker);
+    }
+    assert_eq!(client.get_like_count(&target_post_id), 5);
+
+    // Delete the target post — places tombstone for lazy batch cleanup
+    client.delete_post(&author, &target_post_id);
+    assert!(client.get_post(&target_post_id).is_none());
+
+    // ── Bounded cleanup: Batch 1 (limit = 2) ──
+    client.batch_cleanup_post(&target_post_id, &2);
+
+    // Acceptance criterion: Cleanup follows documented progression for target post
+    env.as_contract(&client.address, || {
+        let remaining_likes: u32 = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::PostLikersCount(target_post_id))
+            .unwrap_or(0);
+        assert_eq!(remaining_likes, 3);
+        assert!(env
+            .storage()
+            .persistent()
+            .has(&StorageKey::DeletedPost(target_post_id)));
+    });
+
+    // Acceptance criterion: Unrelated post metadata and likes retain their prior values
+    let current_before_1 = client.get_post(&post_before_id).unwrap();
+    let current_after_1 = client.get_post(&post_after_id).unwrap();
+    assert_eq!(current_before_1.content, post_before_meta.content);
+    assert_eq!(current_before_1.author, post_before_meta.author);
+    assert_eq!(current_before_1.like_count, 2);
+    assert_eq!(client.get_like_count(&post_before_id), 2);
+
+    assert_eq!(current_after_1.content, post_after_meta.content);
+    assert_eq!(current_after_1.author, post_after_meta.author);
+    assert_eq!(current_after_1.like_count, 1);
+    assert_eq!(client.get_like_count(&post_after_id), 1);
+
+    // ── Bounded cleanup: Batch 2 (limit = 2) ──
+    client.batch_cleanup_post(&target_post_id, &2);
+
+    env.as_contract(&client.address, || {
+        let remaining_likes: u32 = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::PostLikersCount(target_post_id))
+            .unwrap_or(0);
+        assert_eq!(remaining_likes, 1);
+        assert!(env
+            .storage()
+            .persistent()
+            .has(&StorageKey::DeletedPost(target_post_id)));
+    });
+
+    // Verify unrelated post metadata and likes remain untouched
+    let current_before_2 = client.get_post(&post_before_id).unwrap();
+    let current_after_2 = client.get_post(&post_after_id).unwrap();
+    assert_eq!(current_before_2.content, post_before_meta.content);
+    assert_eq!(current_before_2.like_count, 2);
+    assert_eq!(client.get_like_count(&post_before_id), 2);
+    assert_eq!(current_after_2.content, post_after_meta.content);
+    assert_eq!(current_after_2.like_count, 1);
+    assert_eq!(client.get_like_count(&post_after_id), 1);
+
+    // ── Bounded cleanup: Batch 3 (limit = 2) ──
+    // Cleans the final 1 like, reaches terminal state and removes tombstone
+    client.batch_cleanup_post(&target_post_id, &2);
+
+    env.as_contract(&client.address, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&StorageKey::PostLikersCount(target_post_id)));
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&StorageKey::DeletedPost(target_post_id)));
+    });
+
+    // Extra call behaves predictably (returns error because tombstone no longer exists)
+    let extra_call = client.try_batch_cleanup_post(&target_post_id, &2);
+    assert!(
+        extra_call.is_err(),
+        "extra cleanup call after completed terminal state must return error"
+    );
+
+    // Final verification: unrelated adjacent post metadata and likes retain prior values
+    let final_before = client.get_post(&post_before_id).unwrap();
+    let final_after = client.get_post(&post_after_id).unwrap();
+
+    assert_eq!(final_before.id, post_before_meta.id);
+    assert_eq!(final_before.author, post_before_meta.author);
+    assert_eq!(final_before.content, post_before_meta.content);
+    assert_eq!(final_before.tip_total, post_before_meta.tip_total);
+    assert_eq!(final_before.timestamp, post_before_meta.timestamp);
+    assert_eq!(final_before.like_count, post_before_meta.like_count);
+    assert_eq!(client.get_like_count(&post_before_id), 2);
+
+    assert_eq!(final_after.id, post_after_meta.id);
+    assert_eq!(final_after.author, post_after_meta.author);
+    assert_eq!(final_after.content, post_after_meta.content);
+    assert_eq!(final_after.tip_total, post_after_meta.tip_total);
+    assert_eq!(final_after.timestamp, post_after_meta.timestamp);
+    assert_eq!(final_after.like_count, post_after_meta.like_count);
+    assert_eq!(client.get_like_count(&post_after_id), 1);
+}
+
