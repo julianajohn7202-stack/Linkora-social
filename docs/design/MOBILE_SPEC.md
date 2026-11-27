@@ -230,3 +230,98 @@ Root Stack (_layout.tsx)
 - Touch targets must be at minimum 44 × 44 pt (iOS HIG) / 48 × 48 dp (Material Design).
 - All `Image` components must include `accessibilityLabel` describing the image content.
 - Use `accessibilityLiveRegion="polite"` for non-critical async updates (search results, follow counts). Use `"assertive"` only for errors and transaction confirmations.
+
+## Physical-device verification
+
+Run this walkthrough on one iPhone and one Android phone. Use Testnet, a
+dedicated Stellar test account, and an indexer reachable from both phones over
+HTTPS. Install a wallet that handles WalletConnect pairing URIs and supports
+`stellar:testnet` and `stellar_signXDR`. Use a native development build to
+exercise the app's registered `linkora` scheme and push capabilities.
+
+| Device | Prerequisites |
+| --- | --- |
+| iPhone | macOS with Xcode, a trusted connected iPhone with Developer Mode enabled, and a signing team and provisioning profile for the installed build. Push delivery also requires a push-capable profile and APNs credentials. |
+| Android | Android SDK and adb, a connected phone with USB debugging enabled, and the host authorized on the device. Use Android 13 or newer to check the runtime notification prompt. Push delivery also requires FCM configured for the build. |
+
+For push-token verification, use an Expo project configured for push and both
+platforms' credentials. The current [app config](../../apps/mobile/app.json)
+supplies the app identifiers and scheme. The
+[token registration implementation](../../apps/mobile/notifications/registerForPushNotifications.ts)
+logs token acquisition errors, including missing project setup.
+
+### Install and configure the build
+
+From the repository root, install the workspace dependencies with
+`pnpm install --frozen-lockfile`. In your local verification checkout, replace
+the `env` and `projectId` declarations in
+[`createWalletConnectAdapter`](../../apps/mobile/context/WalletContext.tsx)
+with the following declaration for the device build. Expo inlines public
+variables referenced directly through `process.env`, and the checked-in adapter
+looks up the project ID indirectly. Keep this temporary edit local and record
+it with your device results. [Expo environment variables](https://docs.expo.dev/guides/environment-variables/#how-to-read-from-environment-variables)
+
+```ts
+const projectId = process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID;
+```
+
+In the shell that starts Expo, replace both placeholders with your Testnet
+configuration. Use the indexer's device-reachable URL because `localhost`
+on a phone refers to the phone.
+
+```bash
+export EXPO_PUBLIC_INDEXER_URL='https://YOUR-TEST-INDEXER.example'
+export EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID='YOUR_TEST_WALLETCONNECT_PROJECT_ID'
+
+# iPhone, from macOS. Select the attached phone.
+pnpm --filter @linkora/mobile ios --device
+
+# Android, from a host with the Android SDK. Select the attached phone.
+pnpm --filter @linkora/mobile android --device
+```
+
+The commands build and install the app and start Metro. For a later session,
+start Metro with `pnpm --filter @linkora/mobile dev` using the same environment
+and open the installed app. Use a device that can reach Metro from the chosen
+host connection. Confirm the app opens to its tabs and select Testnet in
+Settings.
+
+### Verify wallet handoff and permissions
+
+1. Open [Connect Wallet](../../apps/mobile/app/connect.tsx), select
+   **Connect WalletConnect**, and approve pairing in the installed wallet.
+   Return to Linkora manually if the wallet leaves it in the background.
+   Expect the shortened Testnet address and WalletConnect provider to appear.
+   Disconnect and repeat with pairing rejected. Expect an error and no
+   connected address.
+2. Start with notification permission undecided and approve wallet pairing.
+   Expect the OS permission prompt where the platform allows it. Grant
+   permission. On Android, verify the app creates its default notification
+   channel. With push credentials configured, expect an Expo token and a
+   `POST /api/notifications/register` request with the test address and device
+   platform.
+3. Repeat with a fresh permission state or revoke access in system settings
+   and reconnect. When permission is denied, expect the wallet to remain
+   connected and no new push token registration. If delivery is in scope,
+   send a test notification using the configured test backend and check that
+   tapping it opens the expected screen via the
+   [notification handler](../../apps/mobile/notifications/notificationHandler.ts).
+
+### Verify deep links
+
+Replace `TEST_POST_ID` with a known post ID in the test data and open
+`linkora://post/TEST_POST_ID` on each phone. On iOS, tap a link from Notes or
+another app. On Android, dispatch it from the connected host using
+`adb shell am start -a android.intent.action.VIEW -d 'linkora://post/TEST_POST_ID' social.linkora.app`.
+Try once with Linkora closed and once with it already running. Expect both
+opens to land on the matching post screen. Use the same procedure with
+`linkora://profile/TEST_STELLAR_ADDRESS` and a valid Stellar public key. A
+malformed address should be rejected by the
+[deep-link parser](../../apps/mobile/utils/deepLinks.ts).
+
+Run the HTTPS variant `https://linkora.social/post/TEST_POST_ID` only with a
+build and domain association configured for the device. The app declares an
+iOS associated domain and needs a matching website association for the signing
+team and bundle ID. Android HTTPS app links are unconfigured in the current
+app config. Record the OS version, wallet app, permission outcome, and
+cold/warm link results for each device.
