@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, type CSSProperties } from "react";
+import { useState, useCallback, useMemo, useRef, type CSSProperties } from "react";
 import type { PoolData, TokenMeta } from "@/hooks/usePools";
 import { formatTokenAmount, parseTokenAmount, STELLAR_KEY_RE } from "@/hooks/usePools";
 import { useWithdraw } from "@/hooks/usePoolContract";
@@ -16,21 +16,27 @@ interface WithdrawTabProps {
 
 const AMOUNT_RE = /^\d*\.?\d*$/;
 
+/** Step within the form flow. */
+type Step = "edit" | "review";
+
 export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: WithdrawTabProps) {
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState(currentUser);
   const [amountError, setAmountError] = useState<string | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [step, setStep] = useState<Step>("edit");
   const { status, result, error, withdraw, reset } = useWithdraw();
+
+  // Ref to restore focus to the "Review" button when returning to edit.
+  const reviewBtnRef = useRef<HTMLButtonElement>(null);
+  // Ref to focus the first element in the review panel when it opens.
+  const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const decimals = tokenMeta?.decimals ?? 7;
   const symbol = tokenMeta?.symbol ?? "TOKEN";
   const isAdmin = pool.admins.some((a) => a === currentUser);
   const isSubmitting = status !== "idle" && status !== "error" && status !== "success";
 
-  // For M-of-N: in a real implementation, signers would be collected off-chain
-  // (e.g., via a pending-signatures queue). Here we simulate the current user
-  // as the initiating signer.
   const signers = useMemo(() => [currentUser], [currentUser]);
   const signerCount = signers.length;
   const needsMoreSigners = signerCount < pool.threshold;
@@ -71,25 +77,39 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
     if (recipientError) setRecipientError(validateRecipient(val));
   };
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
+  /** Validate and move to the review step. */
+  const handleProceedToReview = useCallback(
+    (e: React.FormEvent) => {
       e.preventDefault();
       const aErr = validateAmount(amount);
       const rErr = validateRecipient(recipient);
       setAmountError(aErr);
       setRecipientError(rErr);
       if (aErr || rErr) return;
-
-      await withdraw(signers, pool.pool_id, amount, decimals, recipient.trim());
+      setStep("review");
+      // Shift focus into the review panel on the next paint.
+      requestAnimationFrame(() => reviewHeadingRef.current?.focus());
     },
-    [amount, recipient, validateAmount, withdraw, signers, pool.pool_id, decimals]
+    [amount, recipient, validateAmount]
   );
+
+  /** Go back from review to edit, preserving values, restoring focus. */
+  const handleBackToEdit = useCallback(() => {
+    setStep("edit");
+    requestAnimationFrame(() => reviewBtnRef.current?.focus());
+  }, []);
+
+  /** Sign and submit after the user confirms from the review screen. */
+  const handleConfirmWithdraw = useCallback(async () => {
+    await withdraw(signers, pool.pool_id, amount, decimals, recipient.trim());
+  }, [amount, recipient, withdraw, signers, pool.pool_id, decimals]);
 
   const handleReset = () => {
     reset();
     setAmount("");
     setAmountError(null);
     setRecipientError(null);
+    setStep("edit");
   };
 
   const handleSuccessDismiss = () => {
@@ -142,8 +162,8 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
             <div>
               <p style={styles.pendingTitle}>Pending signatures</p>
               <p style={styles.pendingBody}>
-                You are signer <strong>1 of {pool.threshold}</strong> required. {pool.threshold - 1}{" "}
-                more admin
+                You are signer <strong>1 of {pool.threshold}</strong> required.{" "}
+                {pool.threshold - 1} more admin
                 {pool.threshold - 1 !== 1 ? "s" : ""} must co-sign before this withdrawal can
                 execute.
               </p>
@@ -161,8 +181,9 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
         )}
       </div>
 
-      {status === "success" ? null : (
-        <form onSubmit={handleSubmit} style={styles.form} noValidate>
+      {status === "success" ? null : step === "edit" ? (
+        /* ── Edit step ─────────────────────────────────────────────── */
+        <form onSubmit={handleProceedToReview} style={styles.form} noValidate>
           {/* Pool balance */}
           <div style={styles.infoRow}>
             <span style={styles.infoLabel}>Available balance</span>
@@ -233,6 +254,7 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
           </div>
 
           <button
+            ref={reviewBtnRef}
             type="submit"
             disabled={isSubmitting || !amount || !!amountError || !!recipientError}
             style={{
@@ -242,17 +264,92 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
                 : {}),
             }}
           >
-            {isSubmitting ? (
-              <>
-                <span aria-hidden="true">⏳</span>
-                {status === "awaiting_sig" ? "Sign in Freighter…" : "Withdrawing…"}
-              </>
-            ) : needsMoreSigners ? (
-              "Initiate Withdrawal Request"
-            ) : (
-              `Withdraw ${amount ? `${amount} ${symbol}` : ""}`
-            )}
+            Review Withdrawal
           </button>
+        </form>
+      ) : (
+        /* ── Review step ────────────────────────────────────────────── */
+        <section style={styles.reviewPanel} aria-label="Withdrawal review">
+          {/* tabIndex allows programmatic focus on the heading */}
+          <h3
+            ref={reviewHeadingRef}
+            style={styles.reviewHeading}
+            tabIndex={-1}
+          >
+            Review your withdrawal
+          </h3>
+          <p style={styles.reviewSubtitle}>
+            Confirm the details below before signing. Use &ldquo;Edit&rdquo; to change any value.
+          </p>
+
+          <dl style={styles.reviewList}>
+            <div style={styles.reviewRow}>
+              <dt style={styles.reviewTerm}>Amount</dt>
+              <dd style={styles.reviewDetail}>
+                {amount} {symbol}
+              </dd>
+            </div>
+            <div style={styles.reviewRow}>
+              <dt style={styles.reviewTerm}>Token</dt>
+              <dd style={styles.reviewDetail}>{symbol}</dd>
+            </div>
+            <div style={styles.reviewRow}>
+              <dt style={styles.reviewTerm}>Destination</dt>
+              <dd style={{ ...styles.reviewDetail, fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>
+                {recipient.trim()}
+              </dd>
+            </div>
+            <div style={styles.reviewRow}>
+              <dt style={styles.reviewTerm}>Signers required</dt>
+              <dd style={styles.reviewDetail}>
+                {pool.threshold} of {pool.admins.length}
+              </dd>
+            </div>
+            <div style={styles.reviewRow}>
+              <dt style={styles.reviewTerm}>Pool balance after</dt>
+              <dd style={styles.reviewDetail}>
+                {(() => {
+                  try {
+                    const remaining = pool.balance - parseTokenAmount(amount, decimals);
+                    return `${formatTokenAmount(remaining >= 0n ? remaining : 0n, decimals)} ${symbol}`;
+                  } catch {
+                    return "—";
+                  }
+                })()}
+              </dd>
+            </div>
+          </dl>
+
+          <div style={styles.reviewActions}>
+            <button
+              type="button"
+              onClick={handleBackToEdit}
+              style={styles.editBtn}
+            >
+              ← Edit
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmWithdraw}
+              disabled={isSubmitting}
+              style={{
+                ...styles.submitBtn,
+                ...styles.reviewConfirmBtn,
+                ...(isSubmitting ? styles.submitBtnDisabled : {}),
+              }}
+            >
+              {isSubmitting ? (
+                <>
+                  <span aria-hidden="true">⏳</span>
+                  {status === "awaiting_sig" ? "Sign in Freighter…" : "Withdrawing…"}
+                </>
+              ) : needsMoreSigners ? (
+                "Initiate Withdrawal Request"
+              ) : (
+                `Confirm — Withdraw ${amount} ${symbol}`
+              )}
+            </button>
+          </div>
 
           {needsMoreSigners && (
             <p style={styles.initiateNote}>
@@ -260,7 +357,7 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
               admins have signed.
             </p>
           )}
-        </form>
+        </section>
       )}
     </div>
   );
@@ -446,5 +543,78 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--color-text-secondary)",
     textAlign: "center" as const,
     lineHeight: "var(--leading-relaxed)",
+  },
+  /* ── Review panel styles ── */
+  reviewPanel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--space-4)",
+    padding: "var(--space-5)",
+    background: "var(--color-surface-1)",
+    borderRadius: "var(--radius-lg)",
+    border: "1px solid var(--color-border)",
+  },
+  reviewHeading: {
+    margin: 0,
+    fontSize: "var(--text-lg)",
+    fontWeight: 700,
+    color: "var(--color-text-primary)",
+    outline: "none",
+  },
+  reviewSubtitle: {
+    margin: 0,
+    fontSize: "var(--text-sm)",
+    color: "var(--color-text-secondary)",
+    lineHeight: "var(--leading-relaxed)",
+  },
+  reviewList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+    margin: 0,
+    padding: 0,
+    borderRadius: "var(--radius-md)",
+    overflow: "hidden",
+    border: "1px solid var(--color-border)",
+  },
+  reviewRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "var(--space-4)",
+    padding: "var(--space-3) var(--space-4)",
+    borderBottom: "1px solid var(--color-border)",
+    background: "var(--color-bg)",
+  },
+  reviewTerm: {
+    fontSize: "var(--text-sm)",
+    color: "var(--color-text-secondary)",
+    flexShrink: 0,
+  },
+  reviewDetail: {
+    fontSize: "var(--text-sm)",
+    fontWeight: 600,
+    color: "var(--color-text-primary)",
+    textAlign: "right" as const,
+  },
+  reviewActions: {
+    display: "flex",
+    gap: "var(--space-3)",
+    alignItems: "center",
+  },
+  editBtn: {
+    padding: "var(--space-3) var(--space-5)",
+    background: "transparent",
+    color: "var(--color-text-primary)",
+    borderRadius: "var(--radius-lg)",
+    fontWeight: 600,
+    fontSize: "var(--text-base)",
+    border: "1.5px solid var(--color-border)",
+    cursor: "pointer",
+    minHeight: "48px",
+    flexShrink: 0,
+  },
+  reviewConfirmBtn: {
+    flex: 1,
   },
 };
