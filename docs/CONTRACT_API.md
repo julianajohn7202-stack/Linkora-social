@@ -185,6 +185,33 @@ The tables below list every public function on `LinkoraContract` grouped by modu
 
 ---
 
+## Soroban storage lifecycle
+
+The [Stellar state archival reference](https://developers.stellar.org/docs/learn/fundamentals/contract-development/storage/state-archival) describes what happens when a storage entry runs out of ledgers to live (TTL).
+
+| Storage category | Example key and writer                                                                                                                                                                                                                                                              | Lifecycle and maintenance                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Instance         | [`TREASURY`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L91) is written by [`initialize`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L713) and updated by [`set_treasury`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L3042). | Instance values share the contract instance's TTL. Mutating entry points such as `initialize` and `set_treasury` call [`bump_instance`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L4632). As ledgers advance, the shared TTL shrinks. If it expires, restore the archived instance to access the treasury again.                                                                    |
+| Temporary        | [`StorageKey::TipCooldown(post_id, tipper)`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L38) is written by [`tip`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L2518).                                                                           | Each successful tip stores its ledger and calls [`bump_temp`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L4625). For a tip at ledger 1,000 with a window of 10, ledger 1,009 is still blocked and ledger 1,010 satisfies the cooldown check. The entry can remain live after the cooldown ends. Storage expiry permanently removes it, and subsequent tips can create a fresh entry. |
+| Persistent       | [`StorageKey::Post(id)`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L27) is written by [`create_post`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L2107).                                                                                       | Creation and a successful [`get_post`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L2171) call [`bump`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L4617) for that post. Each post has its own TTL. If it expires, the post can be restored from the archive. An explicit `delete_post` removes the record as an application action.                                |
+
+These helpers use a threshold of 534,900 ledgers and a target of 535,000
+ledgers, subject to network TTL limits. A helper extends an entry when
+its remaining TTL is below the threshold. A simulated read can inspect
+the result, while a successful submitted transaction is needed to
+persist a TTL extension.
+
+### Verification
+
+The [contract suite](../packages/contracts/contracts/linkora-contracts/src/test.rs)
+includes `test_instance_storage_ttl_extended_after_mutation`,
+`test_tip_cooldown_100_ledgers_allows_after_advance`, and
+`test_profile_write_extends_ttl` for a persistent record that uses the same
+`bump` helper. When checking a new storage key, advance the test ledger
+and verify its remaining TTL separately from the application's behavior.
+
+---
+
 ## Table of Contents
 
 1. [Stellar HTTP Authentication (v1)](#1-stellar-http-authentication-v1)
