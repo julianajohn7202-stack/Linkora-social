@@ -1,3 +1,14 @@
+/**
+ * Cursor-based pagination utilities for the web client.
+ *
+ * Provides four helpers:
+ *   - {@link encodeCursor}          – URL-safe base64-encode a string/number cursor
+ *   - {@link decodeCursor}          – decode and validate a cursor, throwing {@link InvalidCursorError} on bad input
+ *   - {@link paginationToQuery}     – convert pagination params to URLSearchParams
+ *   - {@link mergePaginatedResults} – deduplicate items across pages by `id`
+ *
+ * Implements issue #34.
+ */
 export class InvalidCursorError extends Error {
   constructor(message = "Invalid pagination cursor") {
     super(message);
