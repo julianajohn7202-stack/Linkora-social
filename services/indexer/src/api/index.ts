@@ -20,7 +20,6 @@ import { createUsersRouter } from "./routes/users";
 import { createFeedRouter } from "./routes/feed";
 import { createReputationRouter } from "./routes/reputation";
 import { createSearchRouter } from "./routes/search";
-import { createReputationRouter } from "./routes/reputation";
 import { MediaUploadConfig } from "../config";
 import { isFenced } from "../gossip";
 import { getBackfillState } from "../stream";

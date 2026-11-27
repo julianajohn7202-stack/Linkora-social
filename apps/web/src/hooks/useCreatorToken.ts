@@ -1,28 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LinkoraClient } from "../../../../packages/sdk/src/client";
+import { CreatorTokenClient } from "../../../../packages/sdk/src/creator-token-client";
 
+const indexerUrl = (process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:3001").replace(/\/$/, "");
 const contractId = process.env.NEXT_PUBLIC_CONTRACT_ID || "CDUMMY";
 const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "https://soroban-testnet.stellar.org";
-
-interface TransferEventDetail {
-  tokenAddress: string;
-  balance?: string | number;
-  amount?: string | number;
-  recipient?: string;
-}
+const networkPassphrase = process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE || "Test SDF Network ; September 2015";
 
 export interface CreatorTokenInfo {
   name: string;
   symbol: string;
-  supply: string;
-  price: string;
+  decimals: number;
+  supply?: string;
+  price?: string;
 }
 
 export interface CreatorTokenHolder {
   address: string;
-  balance?: string;
+  balance: string;
 }
 
 export interface CreatorTokenTransfer {
@@ -32,16 +29,12 @@ export interface CreatorTokenTransfer {
   timestamp: string;
 }
 
-// These methods are optional until the SDK exposes creator token management.
-type CreatorTokenClient = LinkoraClient & {
-  getTokenInfo?(token: string): Promise<Omit<CreatorTokenInfo, "supply" | "price"> & {
-    supply: string | bigint;
-    price: string | bigint;
-  }>;
-  getTokenHolders?(token: string): Promise<CreatorTokenHolder[]>;
-  getTokenTransfers?(token: string): Promise<CreatorTokenTransfer[]>;
-  mintCreatorToken?(token: string, amount: string): Promise<void>;
-};
+interface IndexedCreatorToken {
+  token: string;
+  info: CreatorTokenInfo;
+  holders?: CreatorTokenHolder[];
+  transfers?: CreatorTokenTransfer[];
+}
 
 export interface CreatorTokenState {
   token: string | null;
@@ -51,150 +44,160 @@ export interface CreatorTokenState {
   holderCount: number;
   transfers: CreatorTokenTransfer[];
   isLoading: boolean;
+  isMinting: boolean;
   error: Error | null;
+  mintError: Error | null;
   refresh: () => Promise<void>;
-  mint: (amount?: string) => Promise<void>;
+  mint: (amount: string) => Promise<void>;
 }
 
-/** Loads a wallet's linked creator token and listens for app-level token transfers. */
 export function useCreatorToken(address: string | null): CreatorTokenState {
-  const clientRef = useRef<CreatorTokenClient | null>(null);
-  const requestRef = useRef(0);
-  const [token, setToken] = useState<string | null>(null);
+  const client = useMemo(() => new CreatorTokenClient(
+    new LinkoraClient({ contractId, rpcUrl, networkPassphrase }),
+    networkPassphrase,
+  ), []);
+  const pending = useRef<AbortController | null>(null);
+  const activeWallet = useRef<{ address: string } | null>(null);
+  const minting = useRef(false);
+  const [data, setData] = useState<{ address: string; value: IndexedCreatorToken } | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
-  const [info, setInfo] = useState<CreatorTokenInfo | null>(null);
-  const [holders, setHolders] = useState<CreatorTokenHolder[]>([]);
-  const [holderCount, setHolderCount] = useState(0);
-  const [transfers, setTransfers] = useState<CreatorTokenTransfer[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-
-  if (!clientRef.current) clientRef.current = new LinkoraClient({ contractId, rpcUrl });
+  const [isLoading, setIsLoading] = useState(Boolean(address));
+  const [isMinting, setIsMinting] = useState(false);
+  const [loadError, setLoadError] = useState<Error | null>(null);
+  const [balanceError, setBalanceError] = useState<Error | null>(null);
+  const [mintError, setMintError] = useState<Error | null>(null);
+  const indexed = data && data.address === address ? data.value : null;
+  const token = indexed?.token ?? null;
 
   const refresh = useCallback(async () => {
-    const requestId = ++requestRef.current;
+    pending.current?.abort();
+    setLoadError(null);
     if (!address) {
-      setToken(null);
-      setBalance(null);
-      setInfo(null);
-      setHolders([]);
-      setHolderCount(0);
-      setTransfers([]);
-      setError(null);
+      setData(null);
       setIsLoading(false);
       return;
     }
 
+    const controller = new AbortController();
+    pending.current = controller;
     setIsLoading(true);
-    setError(null);
     try {
-      const profile = await clientRef.current!.getProfile(address);
-      if (requestId !== requestRef.current) return;
-      const nextToken = profile?.creator_token || null;
-      setToken(nextToken);
-
-      if (!nextToken) {
-        setInfo(null);
-        setHolders([]);
-        setHolderCount(0);
-        setTransfers([]);
+      const response = await fetch(`${indexerUrl}/api/profiles/${encodeURIComponent(address)}/creator-token`, {
+        signal: controller.signal,
+      });
+      if (response.status === 404) {
+        if (!controller.signal.aborted) setData(null);
         return;
       }
-
-      const client = clientRef.current!;
-      const [tokenInfo, tokenHolders, tokenTransfers] = await Promise.all([
-        client.getTokenInfo?.(nextToken),
-        client.getTokenHolders?.(nextToken) ?? [],
-        client.getTokenTransfers?.(nextToken) ?? [],
-      ]);
-      if (requestId !== requestRef.current) return;
-
-      setInfo(tokenInfo ? {
-        name: tokenInfo.name,
-        symbol: tokenInfo.symbol,
-        supply: String(tokenInfo.supply),
-        price: String(tokenInfo.price),
-      } : null);
-      const sortedHolders = tokenHolders
-        .map((holder) => ({
-          holder,
-          balance: holder.balance == null ? null : BigInt(holder.balance),
-        }))
-        .sort((a, b) => {
-          if (a.balance === b.balance) return 0;
-          if (a.balance === null) return 1;
-          if (b.balance === null) return -1;
-          return a.balance > b.balance ? -1 : 1;
-        })
-        .map(({ holder }) => holder);
-      setHolders(sortedHolders.slice(0, 10));
-      setHolderCount(tokenHolders.length);
-      setTransfers(tokenTransfers);
+      if (!response.ok) throw new Error(`Failed to load creator token (${response.status}).`);
+      const value: IndexedCreatorToken = await response.json();
+      if (!controller.signal.aborted) setData({ address, value });
     } catch (cause) {
-      if (requestId === requestRef.current) {
-        setError(cause instanceof Error ? cause : new Error("Failed to load creator token."));
-        setToken(null);
-        setBalance(null);
-        setInfo(null);
-        setHolders([]);
-        setHolderCount(0);
-        setTransfers([]);
+      if (!controller.signal.aborted) {
+        setLoadError(cause instanceof Error ? cause : new Error("Failed to load creator token."));
       }
     } finally {
-      if (requestId === requestRef.current) setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false);
     }
   }, [address]);
 
   useEffect(() => {
+    activeWallet.current = address ? { address } : null;
+    setMintError(null);
     void refresh();
     return () => {
-      requestRef.current += 1;
+      activeWallet.current = null;
+      pending.current?.abort();
     };
-  }, [refresh]);
+  }, [address, refresh]);
 
   useEffect(() => {
     setBalance(null);
-  }, [token]);
+    setBalanceError(null);
+    if (!address || !token) return;
+    let generation = 0;
 
-  useEffect(() => {
-    if (!token) return;
-    const onTransfer = (event: Event) => {
-      const detail = (event as CustomEvent<TransferEventDetail>).detail;
-      if (!detail || detail.tokenAddress !== token) return;
-      if (detail.balance !== undefined) {
-        if (typeof detail.balance === "number" && !Number.isSafeInteger(detail.balance)) return;
-        setBalance(String(detail.balance));
-      } else if (detail.recipient === address && detail.amount !== undefined) {
-        const amount = detail.amount;
-        if (typeof amount === "number" && !Number.isSafeInteger(amount)) return;
-        setBalance((current) => String(BigInt(current ?? "0") + BigInt(amount)));
+    async function pollBalance() {
+      const request = ++generation;
+      try {
+        const next = await client.getBalance(token!, address!);
+        if (generation === request) {
+          setBalance(next);
+          setBalanceError(null);
+        }
+      } catch (cause) {
+        if (generation === request) {
+          setBalanceError(cause instanceof Error ? cause : new Error("Failed to read creator token balance."));
+        }
       }
-    };
-    window.addEventListener("linkora:creator-token-transfer", onTransfer);
-    return () => window.removeEventListener("linkora:creator-token-transfer", onTransfer);
-  }, [address, token]);
+    }
 
-  const mint = useCallback(
-    async (amount?: string): Promise<void> => {
-      if (!token) throw new Error("No creator token linked to this wallet.");
-      const client = clientRef.current!;
-      if (!client.mintCreatorToken) throw new Error("Creator token minting is not implemented yet.");
-      if (!amount) throw new Error("Enter an amount to mint.");
-      await client.mintCreatorToken(token, amount);
-      await refresh();
-    },
-    [refresh, token],
-  );
+    function onTransfer(event: Event) {
+      const detail = (event as CustomEvent<{ tokenAddress: string }>).detail;
+      if (detail?.tokenAddress === token) void pollBalance();
+    }
+
+    void pollBalance();
+    const timer = window.setInterval(pollBalance, 30_000);
+    window.addEventListener("linkora:creator-token-transfer", onTransfer);
+    return () => {
+      generation += 1;
+      window.clearInterval(timer);
+      window.removeEventListener("linkora:creator-token-transfer", onTransfer);
+    };
+  }, [address, client, token]);
+
+  const mint = useCallback(async (amount: string) => {
+    if (minting.current) return;
+    const wallet = activeWallet.current;
+    try {
+      if (!wallet || !token || !indexed) throw new Error("No creator token linked to this wallet.");
+      minting.current = true;
+      setIsMinting(true);
+      setMintError(null);
+      const { signTransaction } = await import("@stellar/freighter-api");
+      await client.mint(token, wallet.address, amount, indexed.info.decimals, {
+        signTransaction: (xdr) => signTransaction(xdr, { networkPassphrase, accountToSign: wallet.address }),
+      });
+      if (activeWallet.current === wallet) {
+        window.dispatchEvent(new CustomEvent("linkora:creator-token-transfer", { detail: { tokenAddress: token } }));
+        await refresh();
+      }
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error("Failed to mint creator token.");
+      if (activeWallet.current === wallet) setMintError(error);
+      throw error;
+    } finally {
+      minting.current = false;
+      setIsMinting(false);
+    }
+  }, [client, indexed, refresh, token]);
+
+  const holders = indexed?.holders ?? [];
+  const sortedHolders = holders
+    .map((holder) => ({
+      holder,
+      balance: holder.balance == null ? null : BigInt(holder.balance),
+    }))
+    .sort((a, b) => {
+      if (a.balance === b.balance) return 0;
+      if (a.balance === null) return 1;
+      if (b.balance === null) return -1;
+      return a.balance > b.balance ? -1 : 1;
+    })
+    .map(({ holder }) => holder);
 
   return {
     token,
-    balance,
-    info,
-    holders,
-    holderCount,
-    transfers,
+    balance: token ? balance : null,
+    info: indexed?.info ?? null,
+    holders: sortedHolders.slice(0, 10),
+    holderCount: holders.length,
+    transfers: indexed?.transfers ?? [],
     isLoading,
-    error,
+    isMinting,
+    error: loadError ?? balanceError,
+    mintError,
     refresh,
     mint,
   };

@@ -354,7 +354,6 @@ export class LinkoraClient extends GeneratedLinkoraClient {
   private readonly _timeoutMs: number;
   private readonly _allowHttp: boolean;
   private readonly _horizonUrl?: string;
-  private readonly _indexerUrl: string;
   private readonly _rpcServer: rpc.Server;
 
   constructor(config: ClientConfig) {

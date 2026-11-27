@@ -4,6 +4,7 @@ export * from "./generated/types.js";
 export * from "./client.js";
 export * from "./analytics.js";
 export * from "./tip-client.js";
+export * from "./creator-token-client.js";
 export * from "./profile-client.js";
 export * from "./credentials.js";
 export * from "./mini-apps/validateManifest.js";
