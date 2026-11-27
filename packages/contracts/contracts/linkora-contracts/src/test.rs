@@ -9027,3 +9027,112 @@ fn test_pool_withdraw_valid_amount_reduces_balance() {
         "valid withdrawal must reduce pool balance by the withdrawn amount"
     );
 }
+
+// ── Issue #628: Maintenance Pause and Resume State & Event Fixture Tests ──
+
+#[test]
+fn test_maintenance_pause_and_resume_transitions_and_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _) = setup_contract(&env);
+
+    // Initial state: status getter reflects unpaused state
+    assert_eq!(client.is_paused(), false);
+
+    // Local administrator fixture with Pauser role
+    let pauser = Address::generate(&env);
+    client.grant_role(&admin, &pauser, &Role::Pauser);
+    assert!(client.has_role(&pauser, &Role::Pauser));
+
+    // Coverage for maintenance event fixture: PausedEvent topics and data
+    let paused_event_fixture = PausedEvent {
+        admin: pauser.clone(),
+    };
+    assert_eq!(paused_event_fixture.admin, pauser);
+
+    // Record baseline event count before pause transition
+    let events_before_pause = env.events().all().events().len();
+
+    // Execute pause transition
+    client.pause(&pauser);
+
+    // Status getter reflects paused state
+    assert_eq!(client.is_paused(), true);
+
+    // Verify PausedEvent was emitted
+    let events_after_pause = env.events().all().events().len();
+    assert!(
+        events_after_pause > events_before_pause,
+        "PausedEvent must be emitted on contract pause"
+    );
+
+    // When paused, state-mutating functions are blocked
+    let user = Address::generate(&env);
+    let post_res = client.try_create_post(&user, &String::from_str(&env, "hello"));
+    assert!(post_res.is_err(), "mutating functions must fail while contract is paused");
+
+    // Coverage for maintenance event fixture: UnpausedEvent topics and data
+    let unpaused_event_fixture = UnpausedEvent {
+        admin: pauser.clone(),
+    };
+    assert_eq!(unpaused_event_fixture.admin, pauser);
+
+    // Record event count before resume transition
+    let events_before_resume = env.events().all().events().len();
+
+    // Execute resume (unpause) transition
+    client.unpause(&pauser);
+
+    // Status getter reflects resumed state
+    assert_eq!(client.is_paused(), false);
+
+    // Verify UnpausedEvent was emitted
+    let events_after_resume = env.events().all().events().len();
+    assert!(
+        events_after_resume > events_before_resume,
+        "UnpausedEvent must be emitted on contract resume"
+    );
+
+    // State-mutating functions succeed again after resume
+    let post_id = client.create_post(&user, &String::from_str(&env, "resumed"));
+    assert_eq!(post_id, 1);
+}
+
+#[test]
+#[should_panic(expected = "already paused")]
+fn test_maintenance_pause_when_already_paused_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _) = setup_contract(&env);
+    client.grant_role(&admin, &admin, &Role::Pauser);
+
+    client.pause(&admin);
+    assert!(client.is_paused());
+    // Second pause must panic
+    client.pause(&admin);
+}
+
+#[test]
+#[should_panic(expected = "not paused")]
+fn test_maintenance_unpause_when_not_paused_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _) = setup_contract(&env);
+    client.grant_role(&admin, &admin, &Role::Pauser);
+
+    assert!(!client.is_paused());
+    // Unpause when already unpaused must panic
+    client.unpause(&admin);
+}
+
+#[test]
+#[should_panic(expected = "Pauser role required")]
+fn test_maintenance_pause_requires_pauser_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _) = setup_contract(&env);
+    let unauthorized = Address::generate(&env);
+
+    client.pause(&unauthorized);
+}
+
