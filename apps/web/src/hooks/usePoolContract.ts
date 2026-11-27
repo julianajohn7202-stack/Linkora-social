@@ -125,6 +125,8 @@ async function callPoolDeposit(
   return { hash };
 }
 
+class StalePoolBalanceError extends Error {}
+
 async function callPoolWithdraw(
   signers: string[],
   poolId: string,
@@ -133,7 +135,21 @@ async function callPoolWithdraw(
   onBroadcast?: () => void
 ): Promise<TxResult> {
   const client = await getPoolClient();
-  const xdr = await client.preparePoolWithdrawTx(signers, poolId, amount, recipient);
+  const { SimulationError } = await import("linkora-sdk");
+  let xdr: string;
+  try {
+    xdr = await client.preparePoolWithdrawTx(signers, poolId, amount, recipient);
+  } catch (err) {
+    if (
+      err instanceof SimulationError &&
+      /\b(?:low balance|insufficient (?:pool )?balance|pool balance is insufficient)\b/i.test(
+        err.message
+      )
+    ) {
+      throw new StalePoolBalanceError();
+    }
+    throw err;
+  }
   const hash = await submitToNetwork(client, xdr, config.networkPassphrase, onBroadcast);
   return { hash };
 }
@@ -229,6 +245,10 @@ export function useWithdraw() {
         setResult(tx);
         setStatus("success");
       } catch (err) {
+        if (err instanceof StalePoolBalanceError) {
+          setStatus("idle");
+          return "stale-balance";
+        }
         setError(classifyError(err));
         setStatus("error");
       }

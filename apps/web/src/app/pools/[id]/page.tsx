@@ -23,7 +23,7 @@ export default function PoolDetailPage() {
   const params = useParams();
   const poolId = typeof params.id === "string" ? params.id : null;
   const { publicKey, isConnected } = useWallet();
-  const { pool, state, error: _error, refresh } = usePool(poolId);
+  const { pool, state, error: _error, refresh, refreshFromNetwork } = usePool(poolId);
   const tokenMeta = useTokenMeta(pool?.token ?? null);
   const [activeTab, setActiveTab] = useState<Tab>("deposit");
 
@@ -258,6 +258,8 @@ export default function PoolDetailPage() {
                 >
                   {activeTab === "withdraw" && publicKey && (
                     <PoolWithdrawForm
+                      key={pool.pool_id}
+                      onRefreshBalance={refreshFromNetwork}
                       pool={pool}
                       tokenMeta={tokenMeta}
                       currentUser={publicKey}

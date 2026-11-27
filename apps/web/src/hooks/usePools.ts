@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { config } from "@/config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -178,7 +179,21 @@ export function usePool(poolId: string | null) {
     fetch(poolId);
   }, [poolId, fetch]);
 
-  return { pool, state, error, refresh: () => poolId && fetch(poolId) };
+  const refreshFromNetwork = async () => {
+    if (!poolId) throw new Error("Pool ID is unavailable.");
+    const { LinkoraClient } = await import("linkora-sdk");
+    const client = new LinkoraClient({
+      contractId: config.contractId,
+      rpcUrl: config.sorobanRpcUrl,
+      networkPassphrase: config.networkPassphrase,
+    });
+    const latest = await client.getPool(poolId);
+    if (!latest) throw new Error("Pool not found.");
+    setPool((current) => current?.pool_id === poolId ? { ...latest, pool_id: poolId } : current);
+    return latest.balance;
+  };
+
+  return { pool, state, error, refresh: () => poolId && fetch(poolId), refreshFromNetwork };
 }
 
 export function useTokenMeta(tokenAddress: string | null) {

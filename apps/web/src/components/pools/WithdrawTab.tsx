@@ -12,6 +12,7 @@ interface WithdrawTabProps {
   tokenMeta: TokenMeta | null;
   currentUser: string;
   onSuccess: () => void;
+  onRefreshBalance: () => Promise<bigint>;
 }
 
 const AMOUNT_RE = /^\d*\.?\d*$/;
@@ -19,12 +20,21 @@ const AMOUNT_RE = /^\d*\.?\d*$/;
 /** Step within the form flow. */
 type Step = "edit" | "review";
 
-export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: WithdrawTabProps) {
+export function WithdrawTab({
+  pool,
+  tokenMeta,
+  currentUser,
+  onSuccess,
+  onRefreshBalance,
+}: WithdrawTabProps) {
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState(currentUser);
   const [amountError, setAmountError] = useState<string | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [step, setStep] = useState<Step>("edit");
+  const [balanceRefresh, setBalanceRefresh] = useState<"refreshing" | "updated" | "failed" | null>(
+    null
+  );
   const { status, result, error, withdraw, reset } = useWithdraw();
 
   // Ref to restore focus to the "Review" button when returning to edit.
@@ -35,20 +45,24 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
   const decimals = tokenMeta?.decimals ?? 7;
   const symbol = tokenMeta?.symbol ?? "TOKEN";
   const isAdmin = pool.admins.some((a) => a === currentUser);
-  const isSubmitting = status !== "idle" && status !== "error" && status !== "success";
+  const isSubmitting =
+    balanceRefresh === "refreshing" ||
+    (status !== "idle" && status !== "error" && status !== "success");
+  const submitDisabled =
+    isSubmitting || (balanceRefresh !== "failed" && (!amount || !!amountError || !!recipientError));
 
   const signers = useMemo(() => [currentUser], [currentUser]);
   const signerCount = signers.length;
   const needsMoreSigners = signerCount < pool.threshold;
 
   const validateAmount = useCallback(
-    (val: string): string | null => {
+    (val: string, balance = pool.balance): string | null => {
       if (!val || val === "0") return "Enter an amount";
       if (!AMOUNT_RE.test(val)) return "Invalid number";
       try {
         const parsed = parseTokenAmount(val, decimals);
         if (parsed <= BigInt(0)) return "Amount must be greater than 0";
-        if (parsed > pool.balance) return "Insufficient pool balance";
+        if (parsed > balance) return "Insufficient pool balance";
       } catch {
         return "Invalid amount";
       }
@@ -77,10 +91,24 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
     if (recipientError) setRecipientError(validateRecipient(val));
   };
 
+  const refreshBalance = async () => {
+    setBalanceRefresh("refreshing");
+    try {
+      const balance = await onRefreshBalance();
+      setAmountError(validateAmount(amount, balance));
+      setBalanceRefresh("updated");
+    } catch {
+      setBalanceRefresh("failed");
+    }
+  };
+
   /** Validate and move to the review step. */
-  const handleProceedToReview = useCallback(
-    (e: React.FormEvent) => {
+  const handleProceedToReview = async (e: React.FormEvent) => {
       e.preventDefault();
+      if (balanceRefresh === "failed") {
+        await refreshBalance();
+        return;
+      }
       const aErr = validateAmount(amount);
       const rErr = validateRecipient(recipient);
       setAmountError(aErr);
@@ -89,9 +117,7 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
       setStep("review");
       // Shift focus into the review panel on the next paint.
       requestAnimationFrame(() => reviewHeadingRef.current?.focus());
-    },
-    [amount, recipient, validateAmount]
-  );
+  };
 
   /** Go back from review to edit, preserving values, restoring focus. */
   const handleBackToEdit = useCallback(() => {
@@ -100,15 +126,28 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
   }, []);
 
   /** Sign and submit after the user confirms from the review screen. */
-  const handleConfirmWithdraw = useCallback(async () => {
-    await withdraw(signers, pool.pool_id, amount, decimals, recipient.trim());
-  }, [amount, recipient, withdraw, signers, pool.pool_id, decimals]);
+  const handleConfirmWithdraw = async () => {
+    if (isSubmitting) return;
+    const validationError = validateAmount(amount);
+    if (validationError) {
+      setAmountError(validationError);
+      handleBackToEdit();
+      return;
+    }
+    setBalanceRefresh(null);
+    const outcome = await withdraw(signers, pool.pool_id, amount, decimals, recipient.trim());
+    if (outcome === "stale-balance") {
+      handleBackToEdit();
+      await refreshBalance();
+    }
+  };
 
   const handleReset = () => {
     reset();
     setAmount("");
     setAmountError(null);
     setRecipientError(null);
+    setBalanceRefresh(null);
     setStep("edit");
   };
 
@@ -192,6 +231,16 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
             </span>
           </div>
 
+          {balanceRefresh && (
+            <p role="status" style={styles.fieldError}>
+              {balanceRefresh === "refreshing"
+                ? "The pool balance changed. Refreshing the available balance…"
+                : balanceRefresh === "updated"
+                  ? "The pool balance changed. Review the available balance before trying again."
+                  : "The pool balance changed. Refresh the available balance before trying again."}
+            </p>
+          )}
+
           {/* Amount */}
           <div style={styles.fieldGroup}>
             <label htmlFor="withdraw-amount" style={styles.label}>
@@ -256,15 +305,13 @@ export function WithdrawTab({ pool, tokenMeta, currentUser, onSuccess }: Withdra
           <button
             ref={reviewBtnRef}
             type="submit"
-            disabled={isSubmitting || !amount || !!amountError || !!recipientError}
+            disabled={submitDisabled}
             style={{
               ...styles.submitBtn,
-              ...(isSubmitting || !amount || !!amountError || !!recipientError
-                ? styles.submitBtnDisabled
-                : {}),
+              ...(submitDisabled ? styles.submitBtnDisabled : {}),
             }}
           >
-            Review Withdrawal
+            {balanceRefresh === "refreshing" ? "Refreshing balance…" : balanceRefresh === "failed" ? "Refresh balance" : "Review Withdrawal"}
           </button>
         </form>
       ) : (
