@@ -1490,3 +1490,64 @@ The reverse index `BlockedBy` is used by the indexer and UI to efficiently enume
 | -------------- | -------------------- | ------ | ------------------------ |
 | `BlockEvent`   | `blocker`, `blocked` | —      | `block_user` succeeds.   |
 | `UnblockEvent` | `blocker`, `blocked` | —      | `unblock_user` succeeds. |
+
+---
+
+## Contract event compatibility checklist
+
+Review the contract definition, the indexer's raw event and projection
+paths, and the SDK decoder together before releasing an event change.
+
+- [ ] **Event names.** Record the Rust event type, the exact fixed topic
+      symbols on the wire, and the event names exposed by the indexer and SDK.
+      Check RPC filters, dispatch tables, and subscriber aliases before renaming.
+- [ ] **Topics.** Record every fixed and dynamic topic in order, including
+      its Soroban type. Verify positional decoding and filter behavior. Moving
+      a field between topics and data changes the wire contract.
+- [ ] **Data fields.** Record the encoding (map, vector, or single value),
+      keys or positions, types, units, and missing-value behavior. Preserve
+      exact integers for `u64` IDs and `i128` amounts. Treat an added field as
+      compatible only after verifying how older readers handle it.
+- [ ] **Versioning and rollout.** For an incompatible change, use a
+      distinct event name or an explicit version discriminator and keep the old
+      decoder available for historical replay. Deploy readers that understand both
+      shapes before emitting the new one. If both forms are emitted during rollout,
+      confirm projections apply the logical change once.
+- [ ] **Bindings and fixtures.** Regenerate SDK bindings with `pnpm codegen`
+      after a spec change. Review the generated event definitions and schema hash
+      as described in the [SDK README](../packages/sdk/README.md#contract-schema-changes).
+      The schema hash signals a spec change. Dispatch still needs enough information
+      to decode each event version. Keep historical fixtures and add raw RPC XDR
+      fixtures produced by the updated contract.
+
+### Worked example
+
+1. [`create_post`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L2107)
+   saves the post and publishes [`PostCreatedEvent`](../packages/contracts/contracts/linkora-contracts/src/lib.rs#L350).
+   The decoded wire topics are the symbol `post_created_event`, the
+   `u64` post ID, and the author's `Address`, in that order. Both fields are
+   marked `#[topic]`, so the event carries no named data fields.
+2. The [indexer adapter](../services/indexer/src/index.ts#L301) passes the RPC
+   topics and value to ingestion. The [domain processor](../services/indexer/src/domain-processor.ts#L487)
+   dispatches on `post_created`, reads the named ID and author, and inserts a
+   post projection with the event's ledger as `created_ledger`.
+3. The [SDK parser](../packages/sdk/src/events/types.ts) likewise recognizes
+   `post_created` and reads named fields. Its [existing fixture](../packages/sdk/src/__tests__/events.test.ts#L100)
+   decodes a map with `id: 42` and `author` into a typed event with `id: 42n`.
+
+The existing indexer and SDK fixture paths use a different name and field
+layout from the Soroban emission. The fixture proves the legacy shape is
+consumed. To verify the Soroban shape, capture a real RPC event and check
+that both readers recognize `post_created_event` and extract the positional
+ID and author. That raw shape requires reader changes in the current code.
+
+### Verification
+
+Use the existing [contract suite](../packages/contracts/contracts/linkora-contracts/src/test.rs),
+[indexer domain fixtures](../services/indexer/src/__tests__/domain-processor.test.ts#L131),
+and [SDK decoder fixtures](../packages/sdk/src/__tests__/events.test.ts) when
+reviewing an event change. Assert the emitted topics and data first, then
+feed the same captured event to both readers. For a post creation, verify
+the stored ID, author, and ledger in the projection and the exact `bigint`
+ID in the typed SDK event. Include a historical event to verify replay after
+the change.
