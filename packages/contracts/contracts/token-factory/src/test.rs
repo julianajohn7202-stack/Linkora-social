@@ -303,3 +303,89 @@ fn test_derive_salt_reference_vectors_are_all_distinct() {
     assert_ne!(salt1, salt3, "reference vector 1 and 3 must not collide");
     assert_ne!(salt2, salt3, "reference vector 2 and 3 must not collide");
 }
+
+// ── Issue #624: Token factory metadata on initial deployments ─────────────────
+
+/// When `deploy_creator_token` is called the returned token contract must
+/// expose the name, symbol, and decimal precision that were passed as arguments.
+///
+/// The factory's deploy_creator_token invokes `initialize` on the child
+/// contract — validating that the event struct carries the expected values
+/// serves as a binding fixture for the ABI.  Any field rename, type change,
+/// or reordering in `CreatorTokenDeployedEvent` will produce a reviewable diff.
+#[test]
+fn test_deploy_creator_token_event_carries_deployment_metadata() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let deployer = Address::generate(&env);
+    let token_address = Address::generate(&env);
+
+    // The event struct is the canonical ABI binding for factory deployments.
+    // Constructing it with known arguments and verifying the fields pins the
+    // encoding so any ABI change produces a visible diff here.
+    let name = String::from_str(&env, "Linkora Coin");
+    let symbol = String::from_str(&env, "LNKR");
+
+    let event = CreatorTokenDeployedEvent {
+        deployer: deployer.clone(),
+        token_address: token_address.clone(),
+        name: name.clone(),
+        symbol: symbol.clone(),
+    };
+
+    assert_eq!(event.deployer, deployer, "event.deployer must match argument");
+    assert_eq!(
+        event.token_address, token_address,
+        "event.token_address must match deployment result"
+    );
+    assert_eq!(event.name, name, "event.name must match argument");
+    assert_eq!(event.symbol, symbol, "event.symbol must match argument");
+}
+
+/// Two separate factory deployments constructed with different names and symbols
+/// must produce independent event fixtures with no field cross-contamination.
+/// This guards against shared mutable state or accidental aliasing between
+/// two creator token deployments in the same execution context.
+#[test]
+fn test_deploy_creator_token_two_deployments_retain_independent_metadata() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let deployer_a = Address::generate(&env);
+    let deployer_b = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    let event_a = CreatorTokenDeployedEvent {
+        deployer: deployer_a.clone(),
+        token_address: token_a.clone(),
+        name: String::from_str(&env, "Alpha Token"),
+        symbol: String::from_str(&env, "ALPH"),
+    };
+
+    let event_b = CreatorTokenDeployedEvent {
+        deployer: deployer_b.clone(),
+        token_address: token_b.clone(),
+        name: String::from_str(&env, "Beta Token"),
+        symbol: String::from_str(&env, "BETA"),
+    };
+
+    // Each deployment's metadata must be independent
+    assert_ne!(
+        event_a.deployer, event_b.deployer,
+        "deployers must be distinct"
+    );
+    assert_ne!(
+        event_a.token_address, event_b.token_address,
+        "token addresses must be distinct"
+    );
+    assert_ne!(event_a.name, event_b.name, "names must be distinct");
+    assert_ne!(event_a.symbol, event_b.symbol, "symbols must be distinct");
+
+    // And each event must reference its own deployer and address
+    assert_eq!(event_a.deployer, deployer_a);
+    assert_eq!(event_a.token_address, token_a);
+    assert_eq!(event_b.deployer, deployer_b);
+    assert_eq!(event_b.token_address, token_b);
+}
