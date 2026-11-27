@@ -23,7 +23,8 @@ export default function BlockedUsersScreen() {
     }, [refresh])
   );
 
-  if (loading) {
+  // Full-screen spinner: only on initial load with no prior data yet.
+  if (loading && blocked.length === 0) {
     return (
       <View style={[styles.container, styles.centered]}>
         <ActivityIndicator size="large" color={theme.colors.brand.primary} />
@@ -31,15 +32,17 @@ export default function BlockedUsersScreen() {
     );
   }
 
-  if (error) {
+  // Full-screen error: only when there is no prior data to fall back on.
+  if (error && blocked.length === 0) {
     return (
       <View style={[styles.container, styles.centered]}>
+        <Text style={styles.errorIcon}>⚠️</Text>
         <Text style={styles.errorText}>{error}</Text>
         <Pressable
           style={styles.retryButton}
           onPress={refresh}
           accessibilityRole="button"
-          accessibilityLabel="Retry loading blocked users"
+          accessibilityLabel="Retry loading blocked accounts"
         >
           <Text style={styles.retryText}>Try again</Text>
         </Pressable>
@@ -50,10 +53,33 @@ export default function BlockedUsersScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.eyebrow}>Safety</Text>
-      <Text style={styles.title}>Blocked users</Text>
+      <Text style={styles.title}>Blocked accounts</Text>
       <Text style={styles.subtitle}>
         Review accounts you have blocked and remove them if you want to see their activity again.
       </Text>
+
+      {/* Subtle inline indicator while refreshing with existing data visible */}
+      {loading && blocked.length > 0 && (
+        <View style={styles.refreshBanner}>
+          <ActivityIndicator size="small" color={theme.colors.brand.primary} />
+          <Text style={styles.refreshText}>Refreshing…</Text>
+        </View>
+      )}
+
+      {/* Inline error banner when stale data is still visible */}
+      {error && blocked.length > 0 && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{error}</Text>
+          <Pressable
+            style={styles.errorBannerRetry}
+            onPress={refresh}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading blocked accounts"
+          >
+            <Text style={styles.retryText}>Try again</Text>
+          </Pressable>
+        </View>
+      )}
 
       {blocked.length > 0 ? (
         blocked.map((user) => (
@@ -84,8 +110,11 @@ export default function BlockedUsersScreen() {
         ))
       ) : (
         <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>No blocked users</Text>
-          <Text style={styles.emptyText}>You have not blocked any accounts yet.</Text>
+          <Text style={styles.emptyIcon}>🚫</Text>
+          <Text style={styles.emptyTitle}>No blocked accounts</Text>
+          <Text style={styles.emptyText}>
+            Accounts you block will appear here. You can block someone from their profile.
+          </Text>
         </View>
       )}
 
@@ -134,6 +163,40 @@ function createStyles(theme: ReturnType<typeof useTheme>["theme"]) {
       fontSize: 14,
       lineHeight: 20,
     },
+    refreshBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      backgroundColor: theme.colors.surface.surface1,
+    },
+    refreshText: {
+      color: theme.colors.text.secondary,
+      fontSize: 13,
+    },
+    errorBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderRadius: 8,
+      backgroundColor: theme.colors.semantic.errorLight,
+    },
+    errorBannerText: {
+      flex: 1,
+      color: theme.colors.semantic.error,
+      fontSize: 13,
+    },
+    errorBannerRetry: {
+      borderRadius: theme.radius.full,
+      backgroundColor: theme.colors.brand.primary,
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+    },
     card: {
       borderRadius: 12,
       borderWidth: 1,
@@ -177,6 +240,9 @@ function createStyles(theme: ReturnType<typeof useTheme>["theme"]) {
       fontSize: 12,
       fontWeight: "700",
     },
+    errorIcon: {
+      fontSize: 32,
+    },
     errorText: {
       color: theme.colors.semantic.error,
       fontSize: 14,
@@ -198,9 +264,12 @@ function createStyles(theme: ReturnType<typeof useTheme>["theme"]) {
       borderWidth: 1,
       borderColor: theme.colors.surface.border,
       backgroundColor: theme.colors.surface.surface1,
-      padding: 20,
+      padding: 24,
       alignItems: "center",
-      gap: 6,
+      gap: 8,
+    },
+    emptyIcon: {
+      fontSize: 32,
     },
     emptyTitle: {
       color: theme.colors.text.primary,
