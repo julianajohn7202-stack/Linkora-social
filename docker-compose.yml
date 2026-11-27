@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linkora}
       POSTGRES_DB: ${POSTGRES_DB:-linkora}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -39,7 +39,7 @@ services:
     # window of enforcement, so no persistence is configured.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     networks:
       - backend
     healthcheck:
@@ -70,7 +70,7 @@ services:
       # own counters and the effective limit becomes limit x replicaCount.
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
-      - "3000:3000"
+      - "${INDEXER_HOST_PORT:-3000}:3000"
     networks:
       - backend
       - database
@@ -105,7 +105,7 @@ services:
       # Required for shared rate limiting (HTTP and WebSocket).
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
-      - "3001:3001"
+      - "${DM_RELAY_HOST_PORT:-3001}:3001"
     networks:
       - backend
       - database
@@ -149,7 +149,7 @@ services:
       # Required for shared rate limiting.
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
-      - "4000:4000"
+      - "${ORACLE_HOST_PORT:-4000}:4000"
     volumes:
       # Bind-mount the oracle signing key file into the container.
       - ${ORACLE_KEY_FILE:-./oracle-key.hex}:/run/secrets/oracle-key.hex:ro
@@ -186,11 +186,12 @@ services:
       - path: .env
         required: false
     environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
-      PORT: ${NOTIFICATION_PORT:-3002}
+      PORT: 3002
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
-      - "3002:3002"
+      - "${NOTIFICATION_HOST_PORT:-3002}:3002"
     networks:
       - backend
       - database
@@ -216,13 +217,14 @@ services:
       - path: .env
         required: false
     environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
-      PORT: ${SEARCH_PORT:-3004}
+      PORT: 3004
       HOST: ${SEARCH_HOST:-0.0.0.0}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "3004:3004"
+      - "${SEARCH_HOST_PORT:-3004}:3004"
     networks:
       - backend
       - database
@@ -241,13 +243,15 @@ services:
   media:
     image: linkora-media:latest
     build:
-      context: ./services/media
+      context: .
+      dockerfile: services/media/Dockerfile
     restart: unless-stopped
     env_file:
       - path: .env
         required: false
     environment:
-      PORT: ${MEDIA_PORT:-3003}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      PORT: 3003
       HOST: ${MEDIA_HOST:-0.0.0.0}
       MEDIA_BUCKET: ${MEDIA_BUCKET:-linkora-media}
       MEDIA_ENDPOINT: ${MEDIA_ENDPOINT:-}
@@ -258,7 +262,7 @@ services:
       CDN_SIGNING_SECRET: ${CDN_SIGNING_SECRET:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
-      - "3003:3003"
+      - "${MEDIA_HOST_PORT:-3003}:3003"
     networks:
       - backend
     depends_on:
@@ -266,111 +270,6 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  notification:
-    build:
-      context: ./services/notification
-    restart: unless-stopped
-    environment:
-      PORT: 3002
-    ports:
-      - "3002:3002"
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  search:
-    build:
-      context: ./services/search
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
-      PORT: 3004
-    ports:
-      - "3004:3004"
-    networks:
-      - backend
-      - database
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  notification:
-    build:
-      context: ./services/notification
-    restart: unless-stopped
-    environment:
-      PORT: 3002
-      NODE_ENV: ${NODE_ENV:-production}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
-    ports:
-      - "3002:3002"
-    networks:
-      - backend
-    profiles: [monitoring]
-    depends_on:
-      - jaeger
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  search:
-    build:
-      context: ./services/search
-    restart: unless-stopped
-    environment:
-      PORT: 3003
-      NODE_ENV: ${NODE_ENV:-production}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
-    ports:
-      - "3003:3003"
-    networks:
-      - backend
-    profiles: [monitoring]
-    depends_on:
-      - jaeger
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3003/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  media:
-    build:
-      context: ./services/media
-    restart: unless-stopped
-    environment:
-      PORT: 3004
-      NODE_ENV: ${NODE_ENV:-production}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
-    ports:
-      - "3004:3004"
-    networks:
-      - backend
-    profiles: [monitoring]
-    depends_on:
-      - jaeger
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3004/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -388,213 +287,6 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
     networks:
       - backend
-
-  notification:
-    build:
-      context: ./services/notification
-    restart: unless-stopped
-    environment:
-      PORT: 3002
-      NODE_ENV: ${NODE_ENV:-production}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
-    ports:
-      - "3002:3002"
-    networks:
-      - backend
-    profiles: [monitoring]
-    depends_on:
-      - jaeger
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  search:
-    build:
-      context: ./services/search
-    restart: unless-stopped
-    environment:
-      PORT: 3003
-      NODE_ENV: ${NODE_ENV:-production}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
-    ports:
-      - "3003:3003"
-    networks:
-      - backend
-    profiles: [monitoring]
-    depends_on:
-      - jaeger
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3003/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  media:
-    build:
-      context: ./services/media
-    restart: unless-stopped
-    environment:
-      PORT: 3004
-      NODE_ENV: ${NODE_ENV:-production}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
-    ports:
-      - "3004:3004"
-    networks:
-      - backend
-    profiles: [monitoring]
-    depends_on:
-      - jaeger
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3004/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  jaeger:
-    image: jaegertracing/all-in-one:1.58
-    restart: unless-stopped
-    profiles: [monitoring]
-    ports:
-      - "16686:16686"  # Jaeger UI
-      - "4317:4317"    # OTLP gRPC
-      - "4318:4318"    # OTLP HTTP
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-    networks:
-      - backend
-
-  notification:
-    build:
-      context: ./services/notification
-    restart: unless-stopped
-    environment:
-      PORT: 3002
-    ports:
-      - "3002:3002"
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  search:
-    build:
-      context: ./services/search
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
-      PORT: 3004
-    ports:
-      - "3004:3004"
-    networks:
-      - backend
-      - database
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  notification:
-    build:
-      context: .
-      dockerfile: services/notification/Dockerfile
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      PORT: 3004
-    ports:
-      - "3004:3004"
-    networks:
-      - backend
-      - database
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  search:
-    build:
-      context: .
-      dockerfile: services/search/Dockerfile
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
-      PORT: 3002
-    ports:
-      - "3002:3002"
-    networks:
-      - backend
-      - database
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  media:
-    build:
-      context: .
-      dockerfile: services/media/Dockerfile
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
-      PORT: 3003
-    ports:
-      - "3003:3003"
-    networks:
-      - backend
-      - database
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  notification:
-    build:
-      context: ./services/notification
-    restart: unless-stopped
-    environment:
-      PORT: 3002
-    ports:
-      - "3002:3002"
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
 
 networks:
   frontend:

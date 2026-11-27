@@ -83,6 +83,55 @@ check_stellar_cli() {
   fi
 }
 
+check_service_ports() {
+  local config
+  if ! config=$(cd "$REPO_ROOT" && docker compose config --format json); then
+    error "Could not resolve local Docker Compose ports. Check Docker Compose and your overrides."
+    return 1
+  fi
+
+  printf '%s' "$config" | node --input-type=commonjs -e '
+    const fs = require("node:fs");
+    const net = require("node:net");
+    const { services } = JSON.parse(fs.readFileSync(0, "utf8"));
+    const sockets = [];
+    const overrides = {
+      postgres: "POSTGRES_HOST_PORT",
+      redis: "REDIS_HOST_PORT",
+      indexer: "INDEXER_HOST_PORT",
+      "dm-relay": "DM_RELAY_HOST_PORT",
+      "analytics-oracle": "ORACLE_HOST_PORT",
+      notification: "NOTIFICATION_HOST_PORT",
+      search: "SEARCH_HOST_PORT",
+      media: "MEDIA_HOST_PORT",
+    };
+
+    async function check() {
+      for (const [name, service] of Object.entries(services || {})) {
+        for (const { published, protocol, host_ip } of service.ports || []) {
+          if (!published || published === "0" || (protocol && protocol !== "tcp")) continue;
+          const host = host_ip || "::";
+          const server = net.createServer();
+          try {
+            await new Promise((resolve, reject) => {
+              server.once("error", reject);
+              server.listen({ host, port: Number(published), exclusive: true }, resolve);
+            });
+            sockets.push(server);
+            console.log(`[setup] ${name}: TCP ${host} port ${published} available`);
+          } catch (err) {
+            const override = overrides[name] || "the Compose ports mapping";
+            console.error(`[error] ${name}: cannot bind TCP ${host} port ${published} (${err.code}). Override with ${override}.`);
+            process.exitCode = 1;
+          }
+        }
+      }
+    }
+
+    check().finally(() => sockets.forEach((server) => server.close()));
+  '
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 info "Checking prerequisites..."
@@ -95,6 +144,9 @@ if [[ "$ERRORS" -gt 0 ]]; then
   error "$ERRORS prerequisite(s) missing. Fix the errors above and re-run this script."
   exit 1
 fi
+
+info "Checking local service ports..."
+check_service_ports
 
 info "Installing JavaScript dependencies..."
 cd "$REPO_ROOT"
