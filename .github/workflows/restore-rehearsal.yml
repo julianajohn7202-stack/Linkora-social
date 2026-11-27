@@ -1,0 +1,36 @@
+name: Restore Rehearsal
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tests/migrations/**"
+      - "docker-compose.migrations.yml"
+      - ".github/workflows/restore-rehearsal.yml"
+  workflow_dispatch:
+
+jobs:
+  restore-rehearsal:
+    name: Backup Restore Rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run restore rehearsal
+        run: bash tests/migrations/test-restore.sh
+
+      - name: Add restore rehearsal summary
+        if: always()
+        run: |
+          {
+            echo "## Restore Rehearsal Results"
+            echo ""
+            echo "- Script: \`tests/migrations/test-restore.sh\`"
+            echo "- Source DB: \`linkora_restore_rehearsal\` (migrations applied + fixture inserted)"
+            echo "- Restore DB: \`linkora_restore_verify\` (pg_dump → psql cycle)"
+            echo "- Verifications: schema sentinels, profile count (3), post count (1)"
+          } >> "$GITHUB_STEP_SUMMARY"
