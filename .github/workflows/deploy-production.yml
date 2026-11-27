@@ -7,6 +7,21 @@ on:
         description: "Type DEPLOY to confirm production deployment"
         required: true
         type: string
+      environment:
+        description: "Target environment (default: production)"
+        required: false
+        default: "production"
+        type: choice
+        options:
+          - production
+
+# Serialise deployments per environment.  Two runs that target the same
+# environment are queued; the second waits until the first completes.
+# Runs targeting different environments (should one be added) proceed
+# independently because their concurrency groups differ.
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -31,9 +46,6 @@ jobs:
     environment:
       name: production
       url: https://linkora.xyz
-    concurrency:
-      group: production
-      cancel-in-progress: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
