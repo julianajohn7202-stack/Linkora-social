@@ -12,6 +12,7 @@ import {
   StrKey,
   xdr,
 } from "@stellar/stellar-base";
+import type { TipHistoryOptions, TipHistoryPage, TipRecord, TipTotals } from "./tip-client.js";
 import { GeneratedLinkoraClient } from "./generated/client.js";
 import { Profile, Post, Pool, SimulationResult, LedgerFootprint } from "./types.js";
 import {
@@ -276,7 +277,7 @@ export interface ClientConfig {
   allowHttp?: boolean;
   /** Horizon URL for account sequence fetching. If not provided, defaults based on networkPassphrase. */
   horizonUrl?: string;
-  /** Base URL for the indexer REST API (defaults to http://localhost:3001). */
+  /** Base URL for the indexer REST API (defaults to http://localhost:3001/api). */
   indexerUrl?: string;
 }
 
@@ -355,7 +356,6 @@ export class LinkoraClient extends GeneratedLinkoraClient {
   private readonly _horizonUrl?: string;
   private readonly _indexerUrl: string;
   private readonly _rpcServer: rpc.Server;
-  private readonly _indexerUrl: string;
 
   constructor(config: ClientConfig) {
     super({
@@ -371,7 +371,6 @@ export class LinkoraClient extends GeneratedLinkoraClient {
     this._timeoutMs = config.timeoutMs ?? 30_000;
     this._allowHttp = resolveAllowHttp({ rpcUrl: config.rpcUrl, allowHttp: config.allowHttp });
     this._horizonUrl = config.horizonUrl;
-    this._indexerUrl = (config.indexerUrl ?? "http://localhost:3001").replace(/\/$/, "");
 
     this._rpcServer = new rpc.Server(this._rpcUrl, { allowHttp: this._allowHttp });
     this._indexerUrl = (config.indexerUrl ?? "http://localhost:3001/api").replace(/\/$/, "");
