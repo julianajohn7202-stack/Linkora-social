@@ -174,10 +174,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.84.0
           targets: wasm32v1-none
+          components: rustfmt, clippy
+
+      - name: Report Rust compiler and target versions
+        run: |
+          echo "=== Rust Toolchain Environment ==="
+          rustc --version
+          cargo --version
+          rustup show
+          echo "Target wasm32v1-none available:"
+          rustc --print target-list | grep wasm32v1-none || true
 
       - name: Cache Cargo registry
         uses: actions/cache@v6
@@ -204,6 +215,30 @@ jobs:
         run: |
           cargo build --target wasm32v1-none --release -p linkora-contracts
           cp target/wasm32v1-none/release/linkora_contracts.wasm contracts/linkora-contracts/linkora_contracts.wasm
+
+      - name: Record build metadata
+        run: |
+          mkdir -p dist
+          cat <<EOF > dist/build-metadata.json
+          {
+            "compiler": "$(rustc --version)",
+            "cargo": "$(cargo --version)",
+            "target": "wasm32v1-none",
+            "commit": "${{ github.sha }}",
+            "ref": "${{ github.ref }}",
+            "built_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
+          cat dist/build-metadata.json
+
+      - name: Upload contract build artifact with compiler version and source commit
+        uses: actions/upload-artifact@v7
+        with:
+          name: contract-build-artifact
+          path: |
+            packages/contracts/contracts/linkora-contracts/linkora_contracts.wasm
+            packages/contracts/dist/build-metadata.json
+          retention-days: 30
 
       - name: Run unit tests
         run: cargo test
