@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { readSessionCache, writeSessionCache } from "../lib/cache";
+
+const SEARCH_TTL_MS = 5 * 60_000;
 const INDEXER_API_URL = process.env.NEXT_PUBLIC_INDEXER_API_URL ?? "";
 
 export interface SearchResponse<T = unknown> {
@@ -10,10 +13,15 @@ export interface SearchResponse<T = unknown> {
 interface UseSearchOptions {
   debounceMs?: number;
   endpoint?: string;
+  resultKey?: "results" | "posts" | "profiles";
 }
 
 /** Debounced full-text search that cancels stale requests and ignores late responses. */
-export function useSearch<T = unknown>({ debounceMs = 300, endpoint = "/api/search" }: UseSearchOptions = {}) {
+export function useSearch<T = unknown>({
+  debounceMs = 300,
+  endpoint = "/api/search",
+  resultKey = "results",
+}: UseSearchOptions = {}) {
   const [results, setResults] = useState<T[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,20 +51,28 @@ export function useSearch<T = unknown>({ debounceMs = 300, endpoint = "/api/sear
       return;
     }
 
+    const url = `${INDEXER_API_URL}${endpoint}${endpoint.includes("?") ? "&" : "?"}q=${encodeURIComponent(query)}`;
+    const cacheKey = `linkora:search:${resultKey}:${url}`;
+    const cached = readSessionCache<T[]>(cacheKey);
+    if (Array.isArray(cached)) {
+      setResults(cached);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     timer.current = setTimeout(async () => {
       timer.current = null;
       const requestController = new AbortController();
       controller.current = requestController;
       try {
-        const response = await fetch(
-          `${INDEXER_API_URL}${endpoint}?q=${encodeURIComponent(query)}`,
-          { signal: requestController.signal }
-        );
+        const response = await fetch(url, { signal: requestController.signal });
         if (!response.ok) throw new Error(`Search request failed (${response.status})`);
-        const payload = (await response.json()) as SearchResponse<T> | T[];
-        const nextResults = Array.isArray(payload) ? payload : payload.results;
+        const payload = (await response.json()) as Partial<Record<typeof resultKey, T[]>> | T[];
+        const nextResults = Array.isArray(payload) ? payload : payload?.[resultKey];
+        if (!Array.isArray(nextResults)) throw new Error("Invalid search response");
         if (generation.current === currentGeneration && controller.current === requestController) {
+          writeSessionCache(cacheKey, nextResults, SEARCH_TTL_MS);
           setResults(nextResults);
           setError(null);
         }
@@ -73,7 +89,7 @@ export function useSearch<T = unknown>({ debounceMs = 300, endpoint = "/api/sear
         }
       }
     }, debounceMs);
-  }, [clearPending, debounceMs, endpoint]);
+  }, [clearPending, debounceMs, endpoint, resultKey]);
 
   const clearResults = useCallback(() => {
     generation.current += 1;

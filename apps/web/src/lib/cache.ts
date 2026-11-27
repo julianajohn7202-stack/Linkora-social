@@ -72,3 +72,27 @@ export class MemoryCache<T> {
     }
   }
 }
+
+export function readSessionCache<T>(key: string): T | undefined {
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (raw === null) return undefined;
+    const entry = JSON.parse(raw) as { value: T; expiresAt: number };
+    if (entry.expiresAt > Date.now()) return entry.value;
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Browser storage can be unavailable or contain invalid data.
+  }
+  return undefined;
+}
+
+export function writeSessionCache<T>(key: string, value: T, ttlMs: number): void {
+  try {
+    window.sessionStorage.setItem(
+      key,
+      JSON.stringify({ value, expiresAt: Date.now() + ttlMs }),
+    );
+  } catch {
+    // A storage failure should never prevent returning fresh results.
+  }
+}
