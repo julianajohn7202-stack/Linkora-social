@@ -7,13 +7,41 @@ on:
       - "packages/sdk/src/**"
       - "packages/sdk/package.json"
       - "packages/sdk/tsconfig.json"
+      - "docs/**"
       - ".github/workflows/sdk-docs.yml"
+      - "scripts/validate_docs_links.py"
+  pull_request:
+    paths:
+      - "packages/sdk/src/**"
+      - "packages/sdk/package.json"
+      - "packages/sdk/tsconfig.json"
+      - "docs/**"
+      - ".github/workflows/sdk-docs.yml"
+      - "scripts/validate_docs_links.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  validate-links:
+    name: Validate Documentation Links & Anchors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run link validator unit test suite
+        run: python scripts/validate_docs_links.py --test
+
+      - name: Validate documentation links and anchors
+        run: python scripts/validate_docs_links.py
+
   build-docs:
     name: Build TypeDoc
     runs-on: ubuntu-latest
