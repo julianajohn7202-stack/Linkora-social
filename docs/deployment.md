@@ -18,6 +18,7 @@ This guide covers production deployment of the three Linkora backend services:
 2. [Environment Variable Reference](#2-environment-variable-reference)
    - [Shared rate limiting (`REDIS_URL`)](#24-shared-rate-limiting-redis_url)
 3. [Database Migration Steps](#3-database-migration-steps)
+   - [3a. Migration Rollback Decision Matrix](#3a-migration-rollback-decision-matrix)
 4. [Docker Compose Deployment](#4-docker-compose-deployment)
 5. [Kubernetes Deployment](#5-kubernetes-deployment)
 6. [Health Check Endpoints](#6-health-check-endpoints)
@@ -192,6 +193,93 @@ cd services/dm-relay && pnpm db:migrate
 ### Analytics Oracle
 
 The oracle reads from the indexer's database (read-only). No schema of its own needs to be created.
+
+---
+
+## 3a. Migration Rollback Decision Matrix
+
+When a migration has been applied but the release is unhealthy, operators must
+choose between three strategies. The choice depends on whether the migration is
+reversible and whether application writes have already landed against the new
+schema.
+
+### Decision matrix
+
+| Scenario                                           | Preconditions                                                                                        | Strategy                                                                                                                          | Verification query                                                                                                                                                                            |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reversible migration, no post-migration writes** | Migration is additive (new column or index only); no application writes have used the new column yet | **Roll forward** to a fixed release, or revert with the reverse migration script                                                  | `SELECT COUNT(*) FROM <table> WHERE <new_column> IS NOT NULL;` — expect `0` if no writes landed                                                                                               |
+| **Reversible migration, writes already landed**    | New column exists; rows have been written using it before the rollback decision was made             | **Roll forward** only — do not drop the column; existing data would be destroyed                                                  | `SELECT MAX(created_at) FROM <table>;` — compare against the migration timestamp to confirm writes exist                                                                                      |
+| **Destructive or partially applied migration**     | A `DROP COLUMN` or `DROP TABLE` ran, or the migration exited mid-run leaving the schema inconsistent | **Restore from snapshot** — stop writes, restore the last pre-migration backup, replay the indexer from the last clean checkpoint | `SELECT column_name FROM information_schema.columns WHERE table_name = '<table>';` to confirm column presence; `SELECT processed_cursor FROM indexer_state;` to verify the indexer checkpoint |
+
+### Roll-forward procedure
+
+Use roll-forward when the schema is intact and no writes depend on a column
+being absent:
+
+```bash
+# 1. Deploy the fixed release image
+docker compose pull indexer dm-relay analytics-oracle
+docker compose up -d --no-deps indexer dm-relay analytics-oracle
+
+# 2. Apply the corrective migration
+psql "$DATABASE_URL" -f services/indexer/migrations/<NNN>_fix.sql
+
+# 3. Confirm the schema matches the expected snapshot
+psql "$DATABASE_URL" -c "\d+ <table>"
+```
+
+### Restore from snapshot procedure
+
+Use restore when writes have already corrupted the new schema, or when the
+migration is partially applied and the schema is inconsistent:
+
+```bash
+# 1. Stop all services to prevent further writes
+docker compose stop indexer dm-relay analytics-oracle
+
+# 2. Restore the last pre-migration snapshot
+gunzip -c indexer-<snapshot-date>.sql.gz | psql "$DATABASE_URL_INDEXER"
+
+# 3. Set START_LEDGER in .env to the ledger recorded just before the migration
+#    so the indexer re-derives on-chain state from a known clean point
+#    Example:
+#    START_LEDGER=12340000
+
+# 4. Restart services — the indexer backfills from START_LEDGER automatically
+docker compose up -d
+```
+
+> **Effect on writes made after the snapshot.** Any writes that arrived between
+> the snapshot and the restore are lost. The indexer re-derives on-chain data
+> (posts, follows, tips) by replaying Soroban events from `START_LEDGER`, but
+> off-chain data (DM relay messages, oracle attestation cache) is not recovered
+> automatically. Coordinate with users if messages in the restore window are
+> business-critical.
+
+### Checkpoint reconciliation
+
+After a restore, verify the indexer cursor has caught up and dependent services
+agree on the current state:
+
+```sql
+-- Confirm processed_cursor is advancing past the restore point
+SELECT processed_cursor FROM indexer_state;
+
+-- Confirm no ledger gap remains in the events table
+SELECT MAX(ledger_sequence) AS latest_indexed FROM events;
+```
+
+Compare `latest_indexed` against the current Stellar network ledger via the
+Soroban RPC endpoint:
+
+```bash
+curl -s "$STELLAR_RPC_URL/health" | jq '.latestLedger'
+```
+
+The difference should be within your `BACKFILL_ALERT_THRESHOLD` (default
+5 000 ledgers). If the gap is larger, increase `BACKFILL_MAX_DEPTH_LEDGERS`
+temporarily and restart the indexer, then restore it to the default once
+backfill completes.
 
 ---
 
