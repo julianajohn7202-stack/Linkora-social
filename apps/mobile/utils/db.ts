@@ -357,3 +357,7 @@ export async function reconcileNotifications(remote: Notification[]): Promise<vo
 export async function markAllNotificationsRead(): Promise<void> {
   await db.runAsync(`UPDATE notifications SET read = 1 WHERE read = 0`);
 }
+
+export async function markNotificationRead(id: string): Promise<void> {
+  await db.runAsync(`UPDATE notifications SET read = 1 WHERE id = ?`, id);
+}
