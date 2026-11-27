@@ -140,3 +140,115 @@ fn test_vote_non_existent_proposal_panics() {
 
     client.gov_vote(&voter, &non_existent_proposal_id, &true);
 }
+
+// ── Governance finalization deadline boundary tests ───────────────────────────
+
+/// At `created_ledger + vote_window` the vote window is still open (boundary is
+/// inclusive: `current_ledger <= vote_end`), so voting must succeed and
+/// finalization must be rejected because the strictly-greater condition
+/// (`current_ledger > vote_end`) is not yet satisfied.
+#[test]
+fn test_gov_finalize_on_last_vote_ledger_is_still_open() {
+    use crate::GovStatus;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    // setup_governance configures vote_window = 200.
+    let (client, _admin, _) = setup_governance(&env);
+
+    // Env starts at sequence 0; proposal is created at ledger 0.
+    let proposer = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.set_profile(&proposer, &String::from_str(&env, "proposer_deadline"), &token);
+    let proposal_id = client.gov_propose(&proposer, &GovParameter::FeeBps, &500, &None);
+
+    let proposal = client.gov_get_proposal(&proposal_id);
+    let created_ledger = proposal.created_ledger;
+    let vote_window = proposal.vote_window_ledgers;
+
+    // Advance to exactly created_ledger + vote_window (the last ledger where
+    // voting is still open and finalization is not yet allowed).
+    let boundary_ledger = created_ledger + vote_window;
+    env.ledger().with_mut(|l| l.sequence_number = boundary_ledger);
+
+    // Voting must still be accepted at the boundary ledger.
+    let voter = Address::generate(&env);
+    client.gov_vote(&voter, &proposal_id, &true);
+    let proposal_after_vote = client.gov_get_proposal(&proposal_id);
+    assert_eq!(
+        proposal_after_vote.votes_for, 1,
+        "vote cast at the boundary ledger must be counted"
+    );
+
+    // Finalization must fail because current_ledger == vote_end, which does
+    // not satisfy the strictly-greater condition (current_ledger > vote_end).
+    let finalize_result = client.try_gov_finalize(&proposal_id);
+    assert!(
+        finalize_result.is_err(),
+        "gov_finalize must return Err when called at created_ledger + vote_window (vote window not yet closed)"
+    );
+
+    // Proposal status must remain Active — no premature state change.
+    assert_eq!(
+        client.gov_get_proposal(&proposal_id).status,
+        GovStatus::Active,
+        "proposal status must remain Active when finalization is attempted too early"
+    );
+}
+
+/// At `created_ledger + vote_window + 1` the vote window is closed and
+/// `current_ledger > vote_end` is satisfied, so `gov_finalize` must succeed
+/// and return `GovStatus::Passed` when the FOR votes exceed quorum.
+#[test]
+fn test_gov_finalize_on_first_finalizable_ledger_succeeds() {
+    use crate::GovStatus;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    // setup_governance configures quorum=60, vote_window=200.
+    let (client, _admin, _) = setup_governance(&env);
+
+    // Env starts at sequence 0; proposal is created at ledger 0.
+    let proposer = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.set_profile(&proposer, &String::from_str(&env, "proposer_first_fin"), &token);
+    let proposal_id = client.gov_propose(&proposer, &GovParameter::FeeBps, &500, &None);
+
+    let proposal = client.gov_get_proposal(&proposal_id);
+    let created_ledger = proposal.created_ledger;
+    let vote_window = proposal.vote_window_ledgers;
+
+    // Cast 3 FOR votes and 1 AGAINST vote while still within the vote window
+    // (ledger 0, the creation ledger, satisfies current_ledger <= vote_end).
+    // 3 FOR out of 4 total = 75% approval, which exceeds quorum=60.
+    let voter_for_1 = Address::generate(&env);
+    let voter_for_2 = Address::generate(&env);
+    let voter_for_3 = Address::generate(&env);
+    let voter_against = Address::generate(&env);
+
+    client.gov_vote(&voter_for_1, &proposal_id, &true);
+    client.gov_vote(&voter_for_2, &proposal_id, &true);
+    client.gov_vote(&voter_for_3, &proposal_id, &true);
+    client.gov_vote(&voter_against, &proposal_id, &false);
+
+    // Advance to the first ledger where finalization is allowed:
+    // current_ledger > vote_end, i.e. created_ledger + vote_window + 1.
+    let first_finalizable_ledger = created_ledger + vote_window + 1;
+    env.ledger()
+        .with_mut(|l| l.sequence_number = first_finalizable_ledger);
+
+    // gov_finalize must succeed and return Passed.
+    let status = client.gov_finalize(&proposal_id);
+    assert_eq!(
+        status,
+        GovStatus::Passed,
+        "gov_finalize must return GovStatus::Passed when FOR votes exceed quorum at the first finalizable ledger"
+    );
+
+    // Reading the proposal back must also reflect the updated status.
+    assert_eq!(
+        client.gov_get_proposal(&proposal_id).status,
+        GovStatus::Passed,
+        "proposal status persisted in storage must be GovStatus::Passed after finalization"
+    );
+}
