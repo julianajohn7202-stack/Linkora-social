@@ -1,0 +1,27 @@
+name: Grafana — Validate dashboard datasources
+
+on:
+  pull_request:
+    paths:
+      - "infra/grafana/**"
+      - ".github/workflows/grafana-validate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/grafana/**"
+
+jobs:
+  check-datasources:
+    name: Verify dashboard datasource references
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        uses: mikefarah/yq@v4.44.1
+
+      - name: Check dashboard datasource references
+        run: bash infra/grafana/check-datasources.sh
