@@ -51,15 +51,29 @@ jobs:
           npx wait-on http://localhost:3000 http://localhost:3001/health http://localhost:8000/health --timeout 60000
 
       - name: Run E2E tests
+        id: e2e
         working-directory: apps/web
         env:
           CI: true
         run: pnpm test:e2e
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: playwright-report
+          name: playwright-report-${{ github.run_id }}
           path: apps/web/playwright-report/
           retention-days: 30
+
+      # Traces and screenshots are only produced for failing tests
+      # (trace: on-first-retry, screenshot: only-on-failure in playwright.config.ts).
+      # Uploading them unconditionally on failure avoids storing browser
+      # artifacts for green runs while still giving engineers everything
+      # needed to diagnose a remote failure.
+      - name: Upload traces and screenshots
+        uses: actions/upload-artifact@v4
+        if: failure() && steps.e2e.outcome == 'failure'
+        with:
+          name: e2e-failure-artifacts-${{ github.run_id }}
+          path: apps/web/test-results/
+          retention-days: 7
