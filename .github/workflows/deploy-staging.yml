@@ -24,15 +24,143 @@ on:
         description: "Skip docker compose build step"
         required: false
         default: "false"
+      rollback:
+        description: "Set to 'true' to roll back to the last verified manifest"
+        required: false
+        default: "false"
+      rollback_ref:
+        description: "Git ref (commit SHA or tag) to roll back to — required when rollback=true"
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-staging
   cancel-in-progress: false
 
 jobs:
+  # ── Rollback path ─────────────────────────────────────────────────────────
+  # Resolves a prior deployment manifest, validates it exists and is
+  # compatible, then reruns the standard smoke checks before changing
+  # any running containers.  Missing or incompatible manifests fail here,
+  # before the rollout step runs.
+  resolve-rollback:
+    name: Resolve rollback manifest
+    runs-on: ubuntu-latest
+    if: github.event.inputs.rollback == 'true'
+
+    outputs:
+      rollback_ref: ${{ steps.resolve.outputs.rollback_ref }}
+      rollback_images: ${{ steps.resolve.outputs.rollback_images }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve prior manifest
+        id: resolve
+        env:
+          ROLLBACK_REF: ${{ github.event.inputs.rollback_ref }}
+        run: |
+          # If a specific ref was given, use it; otherwise find the last
+          # commit on main that touched the compose files (the previous deploy).
+          if [[ -n "$ROLLBACK_REF" ]]; then
+            REF="$ROLLBACK_REF"
+          else
+            REF="$(git log --oneline --skip=1 -1 \
+              -- docker-compose.yml docker-compose.staging.yml \
+              | awk '{print $1}')"
+          fi
+
+          if [[ -z "$REF" ]]; then
+            echo "::error::Could not resolve a prior manifest ref. Pass rollback_ref explicitly."
+            exit 1
+          fi
+
+          echo "rollback_ref=${REF}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Resolved rollback ref: ${REF}"
+
+          # Verify the compose files exist at that ref.
+          for f in docker-compose.yml docker-compose.staging.yml; do
+            if ! git show "${REF}:${f}" >/dev/null 2>&1; then
+              echo "::error::${f} not found at ref ${REF} — cannot roll back to an incomplete manifest."
+              exit 1
+            fi
+          done
+
+          # Extract the image tags defined in the staging compose override so
+          # we can surface them in the smoke-check step.
+          IMAGES="$(git show "${REF}:docker-compose.staging.yml" \
+            | grep -E '^\s+image:' | awk '{print $2}' | sort -u | tr '\n' ' ' || true)"
+          echo "rollback_images=${IMAGES}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate rollback images are reachable
+        env:
+          IMAGES: ${{ steps.resolve.outputs.rollback_images }}
+        run: |
+          if [[ -z "$IMAGES" ]]; then
+            echo "::warning::No explicit image tags found in docker-compose.staging.yml at rollback ref — skipping registry check."
+            exit 0
+          fi
+
+          FAILED=0
+          for img in $IMAGES; do
+            # Skip images that use build-time variables or local paths.
+            if [[ "$img" == *'${'* || "$img" != *':'* ]]; then
+              echo "  skipping non-registry image reference: $img"
+              continue
+            fi
+            echo -n "  checking $img ... "
+            if docker buildx imagetools inspect "$img" >/dev/null 2>&1; then
+              echo "OK"
+            else
+              echo "NOT FOUND"
+              echo "::error::Rollback image not reachable in registry: $img"
+              FAILED=1
+            fi
+          done
+
+          if [[ "$FAILED" -eq 1 ]]; then
+            echo "::error::One or more rollback images are missing. Aborting before changing the rollout."
+            exit 1
+          fi
+
+      - name: Smoke-check rollback manifest
+        env:
+          REF: ${{ steps.resolve.outputs.rollback_ref }}
+        run: |
+          echo "Smoke-checking compose files at ref ${REF} ..."
+
+          # Render the compose files from the rollback ref into a temp dir and
+          # run a dry-run config parse to catch structural issues early.
+          TMPDIR="$(mktemp -d)"
+          trap 'rm -rf "$TMPDIR"' EXIT
+
+          git show "${REF}:docker-compose.yml"         > "${TMPDIR}/docker-compose.yml"
+          git show "${REF}:docker-compose.staging.yml" > "${TMPDIR}/docker-compose.staging.yml"
+
+          if command -v docker &>/dev/null; then
+            docker compose \
+              -f "${TMPDIR}/docker-compose.yml" \
+              -f "${TMPDIR}/docker-compose.staging.yml" \
+              config --quiet \
+            && echo "::notice::Rollback manifest at ${REF} parsed successfully." \
+            || { echo "::error::Rollback manifest at ${REF} failed compose config validation."; exit 1; }
+          else
+            echo "::warning::docker not available on runner — skipping compose config validation."
+          fi
+
+  # ── Normal forward deploy ─────────────────────────────────────────────────
   deploy:
     name: Deploy microservices to staging
     runs-on: ubuntu-latest
+    # Run when this is NOT a rollback request, or after the rollback manifest
+    # has been validated successfully.
+    needs: [resolve-rollback]
+    if: |
+      always() &&
+      (github.event.inputs.rollback != 'true' || needs.resolve-rollback.result == 'success')
 
     environment:
       name: staging
@@ -40,7 +168,11 @@ jobs:
 
     steps:
       - name: Checkout repository
+        # For rollbacks: check out the validated prior ref so the compose
+        # files and deploy script match the images being rolled back to.
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.rollback == 'true' && needs.resolve-rollback.outputs.rollback_ref || github.sha }}
 
       - name: Set up SSH agent
         uses: webfactory/ssh-agent@v0.10.0
@@ -78,4 +210,6 @@ jobs:
         if: always()
         run: |
           status="${{ job.status }}"
-          echo "Staging deployment finished with status: $status"
+          mode="${{ github.event.inputs.rollback == 'true' && 'rollback' || 'forward' }}"
+          ref="${{ github.event.inputs.rollback == 'true' && needs.resolve-rollback.outputs.rollback_ref || github.sha }}"
+          echo "Staging ${mode} deployment to ref ${ref} finished with status: ${status}"
