@@ -6,15 +6,19 @@ on:
       - main
     paths:
       - "services/indexer/migrations/**"
+      - "services/dm-relay/migrations/**"
       - "tests/migrations/**"
       - "docker-compose.migrations.yml"
       - ".github/workflows/migrations.yml"
+      - "scripts/summarize_migrations.py"
   pull_request:
     paths:
       - "services/indexer/migrations/**"
+      - "services/dm-relay/migrations/**"
       - "tests/migrations/**"
       - "docker-compose.migrations.yml"
       - ".github/workflows/migrations.yml"
+      - "scripts/summarize_migrations.py"
 
 jobs:
   migrations:
@@ -26,12 +30,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Record migration start time
+        run: echo "MIGRATION_START_SECONDS=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Run migration test suite
+        id: run_migrations
         env:
           MIGRATION_TIMING_REPORT: ${{ runner.temp }}/migration-timings.md
         run: bash tests/migrations/test-migrations.sh
 
       - name: Verify migration count (016–020 must be present)
+        id: verify_count
         run: |
           EXPECTED_MIN=20
           ACTUAL=$(ls services/indexer/migrations/*.sql | wc -l)
@@ -44,13 +53,12 @@ jobs:
 
       - name: Add migration summary
         if: always()
+        env:
+          START_SECONDS: ${{ env.MIGRATION_START_SECONDS }}
+          RUN_STATUS: ${{ steps.run_migrations.outcome }}
+          VERIFY_STATUS: ${{ steps.verify_count.outcome }}
         run: |
-          echo "## Migration Test Results" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          TOTAL=$(ls services/indexer/migrations/*.sql | wc -l)
-          echo "- Total migration files: **$TOTAL**" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Latest migrations: 016_reputation_scores, 017_creator_analytics, 018_search_index, 019_media_attachments, 020_outbound_webhooks" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Schema snapshot: \`tests/migrations/expected-schema.sql\`" >> "$GITHUB_STEP_SUMMARY"
+          python scripts/summarize_migrations.py
           if [[ -f "$RUNNER_TEMP/migration-timings.md" ]]; then
             cat "$RUNNER_TEMP/migration-timings.md" >> "$GITHUB_STEP_SUMMARY"
           fi
