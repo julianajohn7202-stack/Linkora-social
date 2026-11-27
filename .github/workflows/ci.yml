@@ -71,6 +71,9 @@ jobs:
           pnpm --filter @linkora/reputation typecheck
           pnpm --filter @linkora/analytics typecheck
 
+      - name: Validate generated SDK bindings in pull requests
+        run: pnpm --filter @linkora/codegen validate
+
       - name: Run JS/TS tests
         run: pnpm test
         env:
