@@ -1,0 +1,90 @@
+# Linkora Prometheus alert-rule evaluation tests
+#
+# Run with:
+#   promtool test rules infra/prometheus/tests/alert-rules.test.yml
+#
+# Each test group drives a small time-series scenario and asserts which alerts
+# should (or should not) fire at a given evaluation time.
+
+rule_files:
+  - ../alert-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── NotificationDispatchErrorRateHigh ──────────────────────────────────────
+  # Feed a constant error rate that exceeds the 5 % threshold and verify the
+  # alert fires after the 5-minute `for` window.
+  - interval: 1m
+    input_series:
+      # 10 dispatches/min, 1 error/min → 10 % error rate
+      - series: 'notification_dispatch_total{instance="indexer:3000", job="linkora-notification-service"}'
+        values: "0+10x10"
+      - series: 'notification_dispatch_errors_total{instance="indexer:3000", job="linkora-notification-service"}'
+        values: "0+1x10"
+
+    alert_rule_test:
+      # Before the `for: 5m` window elapses the alert must not fire.
+      - eval_time: 4m
+        alertname: NotificationDispatchErrorRateHigh
+        exp_alerts: []
+
+      # At 10 m the sustained error rate has cleared the pending window.
+      - eval_time: 10m
+        alertname: NotificationDispatchErrorRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: linkora-notification-service
+              instance: "indexer:3000"
+              job: "linkora-notification-service"
+            exp_annotations:
+              summary: "Notification dispatch error rate > 5%"
+
+  # ── NotificationDispatchSilent ────────────────────────────────────────────
+  # Service is up but no dispatches occur — alert should fire at 30 m.
+  - interval: 1m
+    input_series:
+      - series: 'notification_dispatch_total{instance="indexer:3000", job="linkora-notification-service"}'
+        values: "5+0x30"
+      - series: 'up{instance="indexer:3000", job="linkora-notification-service"}'
+        values: "1+0x30"
+
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: NotificationDispatchSilent
+        exp_alerts: []
+
+      - eval_time: 30m
+        alertname: NotificationDispatchSilent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: linkora-notification-service
+              instance: "indexer:3000"
+              job: "linkora-notification-service"
+            exp_annotations:
+              summary: "No notifications dispatched in 15 minutes"
+
+  # ── IndexerDown ───────────────────────────────────────────────────────────
+  # Indexer goes down; alert fires after the 2-minute `for` window.
+  - interval: 1m
+    input_series:
+      - series: 'up{instance="indexer:3000", job="linkora-indexer"}'
+        values: "1 1 0 0 0 0 0"
+
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: IndexerDown
+        exp_alerts: []
+
+      - eval_time: 5m
+        alertname: IndexerDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: linkora-indexer
+              instance: "indexer:3000"
+              job: "linkora-indexer"
+            exp_annotations:
+              summary: "Linkora indexer is down"

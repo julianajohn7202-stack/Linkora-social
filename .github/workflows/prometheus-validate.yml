@@ -1,0 +1,39 @@
+name: Prometheus — Validate rules
+
+on:
+  pull_request:
+    paths:
+      - "infra/prometheus/**"
+      - ".github/workflows/prometheus-validate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/prometheus/**"
+
+jobs:
+  validate:
+    name: Validate Prometheus config and rules
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install promtool
+        env:
+          PROM_VERSION: "2.51.2"
+        run: |
+          curl -fsSL \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" \
+            | tar -xz --strip-components=1 -C /usr/local/bin \
+              "prometheus-${PROM_VERSION}.linux-amd64/promtool"
+          promtool --version
+
+      - name: Validate configuration and rule files
+        run: bash infra/prometheus/validate.sh
+
+      - name: Run rule unit tests
+        # Explicitly run the test step so its output appears as a separate
+        # section in the CI log even when validate.sh already covers it.
+        run: promtool test rules infra/prometheus/tests/alert-rules.test.yml
