@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LinkoraClient } from "../../../../packages/sdk/src/client";
-import type { Profile, Post } from "../../../../packages/sdk/src/types";
+import { LinkoraError } from "../../../../packages/sdk/src/errors";
+import type { Profile } from "../../../../packages/sdk/src/types";
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /*  Types                                                                    */
@@ -34,7 +35,7 @@ export interface IndexerPost {
 export type ProfileState =
   | { status: "loading" }
   | { status: "error"; error: Error }
-  | { status: "not-found" }
+  | { status: "unavailable" }
   | { status: "success"; data: ProfileData };
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -53,6 +54,7 @@ const POSTS_PAGE_SIZE = 20;
 export function useProfile(address: string, currentUserAddress?: string | null) {
   const [state, setState] = useState<ProfileState>({ status: "loading" });
   const postsOffsetRef = useRef(0);
+  const requestId = useRef(0);
 
   const clientRef = useRef<LinkoraClient | null>(null);
   if (!clientRef.current) {
@@ -63,22 +65,27 @@ export function useProfile(address: string, currentUserAddress?: string | null) 
 
   const fetchProfileData = useCallback(async () => {
     if (!address) return;
+    const id = ++requestId.current;
 
     try {
       setState({ status: "loading" });
       const client = clientRef.current!;
 
       // 1. On-chain profile struct
-      const profile = await client.getProfile(address).catch(() => {
-        return {
-          address,
-          username: `user_${address.slice(1, 7).toLowerCase()}`,
-          creator_token: "",
-          bio: "Linkora community member",
-        } as Profile & { bio?: string };
+      const profile = await client.getProfile(address).catch((error: unknown) => {
+        // get_profile traps with RentError::Expired for expired registered profiles.
+        if (
+          error instanceof LinkoraError &&
+          typeof error.originalError === "string" &&
+          /Error\(Contract, #(?:1|111)\)/.test(error.originalError)
+        ) {
+          return null;
+        }
+        throw error;
       });
+      if (id !== requestId.current) return;
       if (!profile) {
-        setState({ status: "not-found" });
+        setState({ status: "unavailable" });
         return;
       }
 
@@ -147,6 +154,7 @@ export function useProfile(address: string, currentUserAddress?: string | null) 
         console.warn("Indexer posts fetch failed", err);
       }
 
+      if (id !== requestId.current) return;
       postsOffsetRef.current = posts.length;
 
       // 4. Creator token balance
@@ -172,6 +180,7 @@ export function useProfile(address: string, currentUserAddress?: string | null) 
         },
       });
     } catch (error) {
+      if (id !== requestId.current) return;
       setState({
         status: "error",
         error: error instanceof Error ? error : new Error("Unknown error"),
@@ -180,7 +189,10 @@ export function useProfile(address: string, currentUserAddress?: string | null) 
   }, [address, currentUserAddress]);
 
   useEffect(() => {
-    fetchProfileData();
+    void fetchProfileData();
+    return () => {
+      requestId.current++;
+    };
   }, [fetchProfileData]);
 
   /* ── Load more posts (infinite scroll) ──────────────────────────────── */
@@ -188,6 +200,7 @@ export function useProfile(address: string, currentUserAddress?: string | null) 
   const fetchMorePosts = useCallback(async () => {
     if (state.status !== "success" || !state.data.postsHasMore) return;
 
+    const id = requestId.current;
     const offset = postsOffsetRef.current;
     try {
       const postsRes = await fetch(
@@ -198,6 +211,7 @@ export function useProfile(address: string, currentUserAddress?: string | null) 
       const data = await postsRes.json();
       const newPosts: IndexerPost[] = data.posts ?? [];
 
+      if (id !== requestId.current || offset !== postsOffsetRef.current) return;
       postsOffsetRef.current += newPosts.length;
 
       setState((prev) => {

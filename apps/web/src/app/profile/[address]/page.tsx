@@ -89,19 +89,19 @@ export default function ProfilePage() {
   useWatchAddress(address);
 
   useLinkoraEvent<FollowEventData>("FollowEvent", (event) => {
-    if (event.followee === address) {
+    if (state.status === "success" && event.followee === address) {
       refetch();
     }
   });
 
   useLinkoraEvent<FollowEventData>("UnfollowEvent", (event) => {
-    if (event.followee === address) {
+    if (state.status === "success" && event.followee === address) {
       refetch();
     }
   });
 
   useLinkoraEvent<TipEventData>("TipEvent", () => {
-    refetch();
+    if (state.status === "success") void refetch();
   });
 
   /* ── Follow / unfollow ──────────────────────────────────────────────── */
@@ -292,19 +292,28 @@ export default function ProfilePage() {
 
   if (state.status === "error") {
     return (
-      <div
-        className="flex h-screen items-center justify-center bg-[var(--bg-primary)] text-[var(--error)]"
-        role="alert"
-      >
-        Failed to load profile: {state.error.message}
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--bg-primary)] p-4 text-center">
+        <p className="text-[var(--error)]" role="alert">
+          Couldn&apos;t load this profile. Please try again.
+        </p>
+        <button
+          type="button"
+          onClick={() => void refetch()}
+          className="rounded-lg bg-[var(--accent-coral)] px-4 py-2 font-medium text-white"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
-  if (state.status === "not-found") {
+  if (state.status === "unavailable") {
     return (
-      <div className="flex h-screen items-center justify-center bg-[var(--bg-primary)] text-[var(--text-muted)]">
-        Profile not found
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--bg-primary)] p-4 text-center">
+        <h1 className="text-xl font-semibold text-[var(--text-primary)]">Profile unavailable</h1>
+        <Link href="/explore" className="text-[var(--accent-coral)] underline">
+          Back to Explore
+        </Link>
       </div>
     );
   }
