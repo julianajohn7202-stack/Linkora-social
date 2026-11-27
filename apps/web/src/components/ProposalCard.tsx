@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { VotePanel } from "./VotePanel";
 
 export interface Proposal {
@@ -34,6 +35,61 @@ function formatDate(dateStr: string | undefined): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString();
 }
 
+/**
+ * Returns an absolute deadline string that includes both the local date/time
+ * and the UTC offset so the deadline is unambiguous across time zones.
+ *
+ * Example: "31 Dec 2025, 23:59 UTC+0" or "31 Dec 2025, 18:59 UTC-5"
+ */
+function formatAbsoluteDeadline(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "";
+
+  const datePart = d.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const timePart = d.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  // Build a compact UTC-offset string, e.g. "UTC+5:30" or "UTC-8"
+  const offsetMinutes = -d.getTimezoneOffset(); // getTimezoneOffset() is negated
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absMinutes = Math.abs(offsetMinutes);
+  const hours = Math.floor(absMinutes / 60);
+  const minutes = absMinutes % 60;
+  const tzLabel = minutes === 0 ? `UTC${sign}${hours}` : `UTC${sign}${hours}:${String(minutes).padStart(2, "0")}`;
+
+  return `${datePart}, ${timePart} ${tzLabel}`;
+}
+
+/**
+ * Returns a human-readable relative countdown (e.g. "2 days left") or null
+ * when the deadline has already passed.
+ */
+function relativeCountdown(dateStr: string, now: Date): string | null {
+  const end = new Date(dateStr);
+  if (Number.isNaN(end.getTime())) return null;
+
+  const diffMs = end.getTime() - now.getTime();
+  if (diffMs <= 0) return null;
+
+  const diffSeconds = Math.floor(diffMs / 1000);
+  if (diffSeconds < 60) return `${diffSeconds}s left`;
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}m left`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h left`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d left`;
+}
+
 const STATUS_STYLES: Record<Proposal["status"], string> = {
   active:
     "bg-[var(--color-success-light)] text-[var(--color-success)] border border-[var(--color-success)]/30",
@@ -57,6 +113,12 @@ const STATUS_STYLES: Record<Proposal["status"], string> = {
 export function ProposalCard({ proposal, onVote, disabled = false }: ProposalCardProps) {
   const [localVote, setLocalVote] = useState<"for" | "against" | null>(null);
   const currentVote = localVote ?? proposal.userVote ?? null;
+
+  // Derive whether the proposal has actually expired at render time so an
+  // active-status proposal whose deadline has passed no longer shows a countdown.
+  const now = new Date();
+  const isExpired = proposal.endsAt ? new Date(proposal.endsAt).getTime() <= now.getTime() : false;
+  const effectivelyActive = proposal.status === "active" && !isExpired;
 
   const totalVotes = proposal.votesFor + proposal.votesAgainst;
   const forPct = totalVotes > 0 ? Math.round((proposal.votesFor / totalVotes) * 100) : 0;
@@ -129,7 +191,7 @@ export function ProposalCard({ proposal, onVote, disabled = false }: ProposalCar
         <p className="text-sm text-[var(--text-muted)]" role="status">
           You voted {currentVote}.
         </p>
-      ) : proposal.status === "active" && (
+      ) : effectivelyActive && (
         <div className="flex gap-3">
           <button
             type="button"
@@ -160,10 +222,39 @@ export function ProposalCard({ proposal, onVote, disabled = false }: ProposalCar
         </div>
       )}
 
-      {proposal.endsAt && proposal.status === "active" && (
-        <p className="mt-3 text-xs text-[var(--text-muted)]">
-          Voting ends {formatDate(proposal.endsAt)}
-        </p>
+      {/* Deadline row — absolute datetime + relative countdown or expired notice */}
+      {proposal.endsAt && (
+        <div className="mt-3 text-xs text-[var(--text-muted)]">
+          {effectivelyActive ? (
+            <>
+              {/* Relative countdown only shown while there is time remaining */}
+              {relativeCountdown(proposal.endsAt, now) && (
+                <span className="mr-2 font-medium text-[var(--foreground)]">
+                  {relativeCountdown(proposal.endsAt, now)}
+                </span>
+              )}
+              <span>
+                · Ends{" "}
+                <time
+                  dateTime={new Date(proposal.endsAt).toISOString()}
+                  title={formatAbsoluteDeadline(proposal.endsAt)}
+                >
+                  {formatAbsoluteDeadline(proposal.endsAt)}
+                </time>
+              </span>
+            </>
+          ) : (
+            <span>
+              Ended{" "}
+              <time
+                dateTime={new Date(proposal.endsAt).toISOString()}
+                title={formatAbsoluteDeadline(proposal.endsAt)}
+              >
+                {formatAbsoluteDeadline(proposal.endsAt)}
+              </time>
+            </span>
+          )}
+        </div>
       )}
     </article>
   );
