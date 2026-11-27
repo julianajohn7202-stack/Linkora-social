@@ -8,11 +8,13 @@
  * States:
  *   pending   — "Transaction pending…" with spinner
  *   confirmed — "Confirmed ✓" with hash link to Stellar Expert, auto-dismisses after 5 s
- *   failed    — "Failed" with error message, manual dismiss
+ *   failed    — Submission error; "Transaction failed" with error detail and retry copy
+ *   rejected  — User declined in wallet; "Transaction declined" with try-again copy
+ *   timeout   — Wallet did not respond; "Wallet not responding" with reconnect copy
  *
  * Accessibility:
  *   - Pending/confirmed: role="status" + aria-live="polite"   (non-urgent, doesn't steal focus)
- *   - Failed:            role="alert"  + aria-live="assertive" (urgent, screen readers announce immediately)
+ *   - Failed/rejected/timeout: role="alert" + aria-live="assertive" (urgent, announces immediately)
  *   - Spinner hidden from AT via aria-hidden
  *   - Close button has aria-label
  *
@@ -53,7 +55,6 @@ export function TxToast() {
   return (
     <div
       style={styles.portal}
-      // Keep portal above modals (z-index 200)
       data-testid="tx-toast-portal"
     >
       {toast.status === "pending" && (
@@ -120,14 +121,58 @@ export function TxToast() {
           </span>
           <span style={styles.message}>
             <strong>Transaction failed</strong>
-            {toast.error && (
+            {toast.error ? (
               <>
                 {" — "}
                 <span style={styles.errorDetail}>{toast.error}</span>
               </>
+            ) : (
+              <span style={styles.hint}> — Check your balance and try again.</span>
             )}
           </span>
           <button onClick={dismiss} style={styles.closeBtn} aria-label="Dismiss transaction error">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {toast.status === "rejected" && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          aria-atomic="true"
+          style={{ ...styles.toast, ...styles.rejected }}
+          data-testid="tx-toast"
+        >
+          <span aria-hidden="true" style={styles.icon}>
+            ✕
+          </span>
+          <span style={styles.message}>
+            <strong>Transaction declined</strong>
+            <span style={styles.hint}> — You cancelled the request in your wallet. Try again when ready.</span>
+          </span>
+          <button onClick={dismiss} style={styles.closeBtn} aria-label="Dismiss declined transaction">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {toast.status === "timeout" && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          aria-atomic="true"
+          style={{ ...styles.toast, ...styles.timeout }}
+          data-testid="tx-toast"
+        >
+          <span aria-hidden="true" style={styles.icon}>
+            ⏱
+          </span>
+          <span style={styles.message}>
+            <strong>Wallet not responding</strong>
+            <span style={styles.hint}> — The request timed out. Reconnect your wallet and try again.</span>
+          </span>
+          <button onClick={dismiss} style={styles.closeBtn} aria-label="Dismiss wallet timeout">
             ✕
           </button>
         </div>
@@ -201,6 +246,16 @@ const styles: Record<string, CSSProperties> = {
     borderColor: "var(--color-error, #ef4444)",
     color: "#991b1b",
   },
+  rejected: {
+    background: "var(--color-warning-light, #fef3c7)",
+    borderColor: "var(--color-warning, #f59e0b)",
+    color: "#78350f",
+  },
+  timeout: {
+    background: "var(--color-warning-light, #fef3c7)",
+    borderColor: "var(--color-warning, #f59e0b)",
+    color: "#78350f",
+  },
   icon: {
     fontWeight: 700,
     fontSize: "0.9rem",
@@ -213,6 +268,10 @@ const styles: Record<string, CSSProperties> = {
   errorDetail: {
     fontWeight: 400,
     opacity: 0.9,
+  },
+  hint: {
+    fontWeight: 400,
+    opacity: 0.85,
   },
   hashLink: {
     fontFamily: "var(--font-mono, monospace)",

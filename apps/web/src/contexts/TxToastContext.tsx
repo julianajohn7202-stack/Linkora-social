@@ -24,13 +24,13 @@ import React, { createContext, useCallback, useContext, useState, type ReactNode
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type TxToastStatus = "pending" | "confirmed" | "failed" | "idle";
+export type TxToastStatus = "pending" | "confirmed" | "failed" | "rejected" | "timeout" | "idle";
 
 export interface TxToastState {
   status: TxToastStatus;
   /** Transaction hash — populated on confirmed */
   hash?: string;
-  /** Human-readable error message — populated on failed */
+  /** Human-readable error message — populated on failed, rejected, or timeout */
   error?: string;
 }
 
