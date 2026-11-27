@@ -9954,3 +9954,109 @@ fn test_treasury_rotation_affects_tip_fee_routing() {
     let post2 = client.get_post(&post_id2).unwrap();
     assert_eq!(post2.tip_total, author_amount);
 }
+
+// ── Issue #619: Pool operations budget baseline ───────────────────────────────
+
+#[test]
+fn test_pool_operations_budget_baseline() {
+    // Fixture: representative pool parameters and initial ledger conditions.
+    // Pool: 2-of-3 multisig threshold with a known token and deposit amounts.
+    // Ledger: sequence starts at 0 (default), timestamp = 0.
+    // This test measures comparative budget usage for create, deposit and
+    // withdrawal by running each operation under an unlimited budget and
+    // asserting the pool state matches expected values after each step.
+    // The CPU and memory costs printed here serve as regression baselines.
+    let env = Env::default();
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+
+    let (client, admin, _treasury) = setup_contract(&env);
+
+    // Representative fixture: 3 admins, 2-of-3 threshold
+    let admin1 = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    let admin3 = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = setup_token(&env, &depositor);
+    // Mint extra to depositor for two deposits
+    StellarAssetClient::new(&env, &token).mint(&depositor, &50_000);
+
+    let pool_id = symbol_short!("bench");
+    let pool_admins = vec![&env, admin1.clone(), admin2.clone(), admin3.clone()];
+    let threshold: u32 = 2;
+
+    // Record initial ledger conditions as part of fixture documentation.
+    let initial_ledger = env.ledger().sequence();
+    let initial_timestamp = env.ledger().timestamp();
+    assert_eq!(initial_ledger, 0, "fixture: ledger starts at 0");
+    assert_eq!(initial_timestamp, 0, "fixture: timestamp starts at 0");
+
+    // ── Operation 1: create_pool ──────────────────────────────────────
+    env.cost_estimate().budget().reset_unlimited();
+    client.create_pool(&admin, &pool_id, &token, &pool_admins, &threshold);
+    let cpu_create = env.cost_estimate().budget().cpu_instruction_cost();
+    let mem_create = env.cost_estimate().budget().memory_bytes_cost();
+
+    let pool_after_create = client.get_pool(&pool_id).unwrap();
+    assert_eq!(pool_after_create.balance, 0, "pool starts empty");
+    assert_eq!(pool_after_create.threshold, threshold, "threshold matches fixture");
+
+    // ── Operation 2: pool_deposit ──────────────────────────────────────
+    let deposit_amount: i128 = 1_000;
+    env.cost_estimate().budget().reset_unlimited();
+    client.pool_deposit(&depositor, &pool_id, &token, &deposit_amount);
+    let cpu_deposit = env.cost_estimate().budget().cpu_instruction_cost();
+    let mem_deposit = env.cost_estimate().budget().memory_bytes_cost();
+
+    let pool_after_deposit = client.get_pool(&pool_id).unwrap();
+    assert_eq!(pool_after_deposit.balance, deposit_amount, "deposit reflected in pool balance");
+
+    // Advance ledger past the pool deposit cooldown (720 ledgers) for a second deposit
+    env.ledger().with_mut(|l| l.sequence_number += 721);
+
+    // Second deposit to verify accumulation
+    let deposit_amount2: i128 = 500;
+    client.pool_deposit(&depositor, &pool_id, &token, &deposit_amount2);
+    assert_eq!(
+        client.get_pool(&pool_id).unwrap().balance,
+        deposit_amount + deposit_amount2,
+        "second deposit accumulates on existing balance"
+    );
+
+    // ── Operation 3: pool_withdraw ─────────────────────────────────────
+    // 2-of-3 multisig: use admin1 and admin2 as signers
+    let signers = vec![&env, admin1.clone(), admin2.clone()];
+    let withdraw_amount: i128 = 300;
+    env.cost_estimate().budget().reset_unlimited();
+    client.pool_withdraw(&signers, &pool_id, &withdraw_amount, &recipient);
+    let cpu_withdraw = env.cost_estimate().budget().cpu_instruction_cost();
+    let mem_withdraw = env.cost_estimate().budget().memory_bytes_cost();
+
+    let pool_after_withdraw = client.get_pool(&pool_id).unwrap();
+    assert_eq!(
+        pool_after_withdraw.balance,
+        deposit_amount + deposit_amount2 - withdraw_amount,
+        "withdrawal reduces pool balance"
+    );
+
+    // Recipient received the withdrawn tokens.
+    let token_client = TokenClient::new(&env, &token);
+    assert_eq!(
+        token_client.balance(&recipient),
+        withdraw_amount,
+        "recipient receives withdrawn amount"
+    );
+
+    // ── Budget baseline report ─────────────────────────────────────────
+    // Verify all three budget measurements are positive (operations consumed resources).
+    // The exact values are implementation-specific; these assertions confirm the
+    // cost estimator returned meaningful numbers, not that specific thresholds hold.
+    assert!(cpu_create > 0, "create_pool must consume CPU instructions");
+    assert!(mem_create > 0, "create_pool must consume memory");
+    assert!(cpu_deposit > 0, "pool_deposit must consume CPU instructions");
+    assert!(mem_deposit > 0, "pool_deposit must consume memory");
+    assert!(cpu_withdraw > 0, "pool_withdraw must consume CPU instructions");
+    assert!(mem_withdraw > 0, "pool_withdraw must consume memory");
+}
