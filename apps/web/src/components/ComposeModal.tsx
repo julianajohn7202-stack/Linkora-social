@@ -49,15 +49,18 @@ export function ComposeModal({ submitFn = submitPost }: ComposeModalProps = {}) 
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<Element | null>(null);
+  const triggerRef = useRef<Element | null>(null);
 
   const charCount = content.length;
   const isOverLimit = charCount > MAX_CONTENT_LENGTH;
   const isEmpty = content.trim().length === 0;
   const isDisabled = isEmpty || isOverLimit || publishState.status !== "idle";
 
-  // Listen to open event
+  // Listen to open event — capture the trigger element for focus restoration
   useEffect(() => {
     const handleOpen = () => {
+      triggerRef.current = document.activeElement;
       setIsOpen(true);
       setPublishState({ status: "idle", errorMsg: "", postId: null });
     };
@@ -69,6 +72,19 @@ export function ComposeModal({ submitFn = submitPost }: ComposeModalProps = {}) 
     setIsOpen(false);
     setContent("");
     setPublishState({ status: "idle", errorMsg: "", postId: null });
+    // Return focus to the element that opened the modal
+    requestAnimationFrame(() => {
+      const trigger = triggerRef.current as HTMLElement | null;
+      if (trigger && document.contains(trigger) && typeof trigger.focus === "function") {
+        trigger.focus({ preventScroll: true });
+      } else {
+        const fallback = document.body.querySelector<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        fallback?.focus({ preventScroll: true });
+      }
+      triggerRef.current = null;
+    });
   }, []);
 
   // Focus textarea when modal opens
