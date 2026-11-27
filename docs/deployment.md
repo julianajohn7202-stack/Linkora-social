@@ -19,6 +19,7 @@ This guide covers production deployment of the three Linkora backend services:
    - [Shared rate limiting (`REDIS_URL`)](#24-shared-rate-limiting-redis_url)
 3. [Database Migration Steps](#3-database-migration-steps)
    - [3a. Migration Rollback Decision Matrix](#3a-migration-rollback-decision-matrix)
+   - [3b. Test Network Reset Recovery](#3b-test-network-reset-recovery)
 4. [Docker Compose Deployment](#4-docker-compose-deployment)
 5. [Kubernetes Deployment](#5-kubernetes-deployment)
 6. [Health Check Endpoints](#6-health-check-endpoints)
@@ -280,6 +281,168 @@ The difference should be within your `BACKFILL_ALERT_THRESHOLD` (default
 5 000 ledgers). If the gap is larger, increase `BACKFILL_MAX_DEPTH_LEDGERS`
 temporarily and restart the indexer, then restore it to the default once
 backfill completes.
+
+---
+
+## 3b. Test Network Reset Recovery
+
+Stellar testnet is periodically reset by the Stellar Development Foundation.
+A reset wipes all contract state and account balances, invalidating every
+contract ID, `START_LEDGER` value, and checkpoint the indexer has stored.
+This section describes how to identify a reset, republish deployment metadata,
+and verify that dependent services are healthy on the new network state.
+
+### Identifying a reset
+
+A testnet reset has occurred when any of the following are observed:
+
+| Signal                                                                                          | How to check                                                                                                             |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Indexer log line: `Fatal error` or repeated RPC errors with `ledger sequence not found`         | `docker compose logs indexer --tail 50`                                                                                  |
+| `START_LEDGER` in `.env` or the `staging` environment is higher than the current network ledger | `curl -s "$STELLAR_RPC_URL/health" \| jq '.latestLedger'` — expect a small number (e.g. < 1 000) immediately after reset |
+| `CONTRACT_ID` resolves to nothing on the network                                                | `stellar contract invoke --id "$CONTRACT_ID" --network testnet -- --help` returns `contract not found`                   |
+| Indexer `processed_cursor` does not advance                                                     | `SELECT processed_cursor FROM indexer_state;` stays constant                                                             |
+
+### Recovery checklist
+
+Work through this checklist in order. Each step names its verification.
+
+#### 1. Confirm the reset
+
+```bash
+# Check the current testnet ledger sequence
+curl -s "https://soroban-testnet.stellar.org/health" | jq '.latestLedger'
+# A value well below your stored START_LEDGER confirms a reset
+```
+
+#### 2. Stop all services
+
+```bash
+docker compose stop indexer dm-relay analytics-oracle
+```
+
+#### 3. Redeploy the Linkora contract to testnet
+
+```bash
+# Build the contract
+pnpm --filter contracts build
+
+# Deploy to testnet and capture the new contract ID and deployment ledger
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/linkora.wasm \
+  --source <your-testnet-account-secret> \
+  --network testnet \
+  --fee 100000
+# Output example:
+#   Contract ID: CABC...NEW
+#   Deployment ledger: 54321
+```
+
+Record the new `CONTRACT_ID` and `START_LEDGER` (the deployment ledger sequence).
+
+#### 4. Update deployment metadata
+
+**Local / Docker Compose:**
+
+```bash
+# .env
+CONTRACT_ID=CABC...NEW    # from step 3
+START_LEDGER=54321         # from step 3
+```
+
+**Testnet / staging (GitHub Actions environment):**
+
+Update the `CONTRACT_ID` and `START_LEDGER` variables in
+**repo Settings → Environments → staging** to match the new deployment.
+
+#### 5. Clear the indexer database
+
+The old indexed state is invalid against the new network. Drop and recreate the
+indexer schema:
+
+```bash
+# Drop the old schema
+psql "$DATABASE_URL_INDEXER" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+# Re-apply migrations from scratch
+for f in services/indexer/migrations/*.sql; do
+  psql "$DATABASE_URL_INDEXER" -f "$f"
+done
+```
+
+#### 6. Restart services
+
+```bash
+docker compose up -d
+```
+
+The indexer will begin indexing from the new `START_LEDGER` value. Monitor
+backfill progress:
+
+```bash
+docker compose logs -f indexer | grep -E "processed_cursor|gap|backfill"
+```
+
+#### 7. Reconcile dependent services
+
+**DM relay** — relay messages reference sender/recipient Stellar addresses.
+Addresses on testnet are unaffected by a contract reset (they persist across
+network resets), but any in-flight idempotency keys are stale. Clear them:
+
+```bash
+psql "$DATABASE_URL_DM" -c "TRUNCATE TABLE idempotency_keys;"
+```
+
+**Analytics oracle** — the oracle references `CONTRACT_ID` for on-chain
+attestations. It picks up the new value from its environment variable on
+restart; no additional steps are needed beyond step 4 above.
+
+**App configuration** — if `CONTRACT_ID` is embedded in front-end environment
+variables (`NEXT_PUBLIC_CONTRACT_ID` or equivalent), rebuild and redeploy the
+web and mobile apps.
+
+```bash
+# Web
+cd apps/web && pnpm build && pnpm start
+
+# Mobile — regenerate the Expo build with the updated config
+cd apps/mobile && pnpm expo:build
+```
+
+### Final smoke sequence
+
+Run this sequence after completing all checklist steps to confirm the new
+deployment is healthy end-to-end.
+
+```bash
+# 1. Confirm the indexer has indexed at least one ledger past START_LEDGER
+psql "$DATABASE_URL_INDEXER" -c \
+  "SELECT processed_cursor FROM indexer_state;"
+# processed_cursor should be >= START_LEDGER + 1
+
+# 2. Confirm the events table is being populated (write check)
+psql "$DATABASE_URL_INDEXER" -c \
+  "SELECT COUNT(*), MAX(ledger_sequence) FROM events;"
+# COUNT > 0 confirms writes; MAX should be close to the current network ledger
+
+# 3. Read check — query the indexer API
+curl -s "http://localhost:3000/health/ready" | jq '.status'
+# Expected: "ready"
+
+# 4. Write check — submit a test post via the contract
+stellar contract invoke \
+  --id "$CONTRACT_ID" \
+  --source <your-testnet-account-secret> \
+  --network testnet \
+  -- create_post --content "smoke test after reset"
+# Expect a successful transaction hash in the output
+
+# 5. Confirm the new post appears in the indexer
+curl -s "http://localhost:3000/api/posts?limit=1" | jq '.[0].content'
+# Expected: "smoke test after reset"
+```
+
+All five checks passing confirms the reset recovery is complete.
 
 ---
 
