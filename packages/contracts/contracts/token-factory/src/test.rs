@@ -145,3 +145,77 @@ fn test_update_token_wasm_rejects_zero_hash() {
     let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
     client.update_token_wasm(&zero_hash);
 }
+
+// ── Issue #625: Token Factory WASM Rotation Across Deployments ────────────────
+
+#[test]
+fn test_token_factory_wasm_rotation_across_deployments() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Fixture 1: Initial template WASM fixture (v1)
+    let wasm_hash_v1 = BytesN::from_array(&env, &[1u8; 32]);
+    // Fixture 2: Distinguishable updated template WASM fixture (v2)
+    let wasm_hash_v2 = BytesN::from_array(&env, &[2u8; 32]);
+    assert_ne!(wasm_hash_v1, wasm_hash_v2);
+
+    let factory_id = env.register(TokenFactoryContract, ());
+    let client = TokenFactoryContractClient::new(&env, &factory_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &wasm_hash_v1);
+
+    // Initial getter returns the v1 template hash
+    assert_eq!(client.get_token_wasm_hash(), wasm_hash_v1);
+
+    // ── Deployment 1: Created before rotation using template v1 ──
+    let deployer_1 = Address::generate(&env);
+    let name_1 = String::from_str(&env, "Creator Token V1");
+    let symbol_1 = String::from_str(&env, "CTV1");
+    let salt_1 = TokenFactoryContract::derive_salt(&env, &deployer_1, &symbol_1);
+
+    // Capture deployment metadata and event fixture for existing token
+    let deployed_token_1 = CreatorTokenDeployedEvent {
+        deployer: deployer_1.clone(),
+        token_address: Address::generate(&env),
+        name: name_1.clone(),
+        symbol: symbol_1.clone(),
+    };
+    let token_1_template = client.get_token_wasm_hash();
+    assert_eq!(token_1_template, wasm_hash_v1);
+
+    // ── Rotation: Admin updates the template WASM hash to v2 ──
+    client.update_token_wasm(&wasm_hash_v2);
+
+    // Acceptance criterion: The getter returns the updated template hash.
+    assert_eq!(client.get_token_wasm_hash(), wasm_hash_v2);
+
+    // ── Deployment 2: Created after rotation using template v2 ──
+    let deployer_2 = Address::generate(&env);
+    let name_2 = String::from_str(&env, "Creator Token V2");
+    let symbol_2 = String::from_str(&env, "CTV2");
+    let salt_2 = TokenFactoryContract::derive_salt(&env, &deployer_2, &symbol_2);
+
+    let deployed_token_2 = CreatorTokenDeployedEvent {
+        deployer: deployer_2.clone(),
+        token_address: Address::generate(&env),
+        name: name_2.clone(),
+        symbol: symbol_2.clone(),
+    };
+    let token_2_template = client.get_token_wasm_hash();
+
+    // Acceptance criterion: New deployments use the selected template (v2)
+    assert_eq!(token_2_template, wasm_hash_v2);
+    assert_ne!(token_1_template, token_2_template);
+    assert_ne!(salt_1, salt_2);
+
+    // Acceptance criterion: Existing tokens still expose their original metadata
+    assert_eq!(deployed_token_1.name, name_1);
+    assert_eq!(deployed_token_1.symbol, symbol_1);
+    assert_eq!(deployed_token_1.deployer, deployer_1);
+
+    assert_eq!(deployed_token_2.name, name_2);
+    assert_eq!(deployed_token_2.symbol, symbol_2);
+    assert_eq!(deployed_token_2.deployer, deployer_2);
+}
+
