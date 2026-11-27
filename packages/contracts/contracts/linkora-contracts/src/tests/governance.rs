@@ -409,3 +409,95 @@ fn test_proposal_status_vetoed_prevents_execution() {
         "executing a vetoed proposal must return an error"
     );
 }
+
+// ── Issue #621: Proposal quorum snapshots across configuration updates ──────────
+
+/// Proposals snapshot the quorum at creation time. A configuration change after
+/// proposal creation must not alter the quorum of the existing proposal, while a
+/// new proposal created after the change must reflect the updated quorum.
+///
+/// Setup:
+///   - Config A: quorum=60, vote_window=200, time_lock=100, decay=0, floor=0
+///   - Proposal P1 is created under Config A  →  P1.quorum == 60
+///   - Config is updated to quorum=80 (Config B)
+///   - Proposal P2 is created under Config B  →  P2.quorum == 80
+///   - Both proposals are voted on with the same fixed fixtures
+///   - P1 is finalized: 65 % approval ≥ 60 → Passed
+///   - P2 is finalized: 65 % approval < 80 → Failed
+#[test]
+fn test_quorum_snapshot_isolated_across_config_change() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Config A: quorum=60, no decay, floor=0
+    let (client, admin, _) = setup_contract(&env);
+    client.gov_init_config(&admin, &60, &100, &200, &0, &0);
+
+    // Create P1 under Config A — snapshots quorum=60
+    let proposer1 = Address::generate(&env);
+    let token1 = Address::generate(&env);
+    client.set_profile(&proposer1, &String::from_str(&env, "prop_621a"), &token1);
+    let p1 = client.gov_propose(&proposer1, &GovParameter::FeeBps, &100, &None);
+    let p1_snapshot = client.gov_get_proposal(&p1);
+    assert_eq!(
+        p1_snapshot.quorum, 60,
+        "P1 must snapshot quorum=60 from Config A"
+    );
+
+    // Update config to quorum=80 (Config B) — P1 must be unaffected
+    client.gov_init_config(&admin, &80, &100, &200, &0, &0);
+
+    // Create P2 under Config B — snapshots quorum=80
+    let proposer2 = Address::generate(&env);
+    let token2 = Address::generate(&env);
+    client.set_profile(&proposer2, &String::from_str(&env, "prop_621b"), &token2);
+    let p2 = client.gov_propose(&proposer2, &GovParameter::FeeBps, &200, &None);
+    let p2_snapshot = client.gov_get_proposal(&p2);
+    assert_eq!(
+        p2_snapshot.quorum, 80,
+        "P2 must snapshot quorum=80 from Config B"
+    );
+
+    // Fixed vote fixture: 13 for, 7 against = 65 % approval
+    // 65 % ≥ 60 (P1 quorum) → P1 passes
+    // 65 % < 80 (P2 quorum) → P2 fails
+    for _ in 0..13 {
+        let v = Address::generate(&env);
+        client.gov_vote(&v, &p1, &true);
+    }
+    for _ in 0..7 {
+        let v = Address::generate(&env);
+        client.gov_vote(&v, &p1, &false);
+    }
+
+    for _ in 0..13 {
+        let v = Address::generate(&env);
+        client.gov_vote(&v, &p2, &true);
+    }
+    for _ in 0..7 {
+        let v = Address::generate(&env);
+        client.gov_vote(&v, &p2, &false);
+    }
+
+    // Advance past vote_window (200)
+    env.ledger()
+        .with_mut(|l| l.sequence_number += 201);
+
+    let s1 = client.gov_finalize(&p1);
+    let s2 = client.gov_finalize(&p2);
+
+    assert_eq!(
+        s1,
+        GovStatus::Passed,
+        "P1 must pass: 65 % approval meets its snapshotted quorum of 60"
+    );
+    assert_eq!(
+        s2,
+        GovStatus::Failed,
+        "P2 must fail: 65 % approval does not meet its snapshotted quorum of 80"
+    );
+
+    // Verify persisted statuses match what gov_finalize returned
+    assert_eq!(client.gov_get_proposal(&p1).status, GovStatus::Passed);
+    assert_eq!(client.gov_get_proposal(&p2).status, GovStatus::Failed);
+}
