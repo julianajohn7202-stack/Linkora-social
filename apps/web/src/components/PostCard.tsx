@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BlurhashImage } from "@/components/BlurhashImage";
 import { MediaGallery } from "@/components/media/MediaGallery";
 
@@ -93,6 +93,174 @@ export function formatAuthor(author: string): string {
   return author.length > 16 ? `${author.slice(0, 6)}...${author.slice(-4)}` : author;
 }
 
+/**
+ * Keyboard-accessible action menu attached to a single post.
+ *
+ * Focus management:
+ * - Opens on Enter / Space / ArrowDown on the trigger button.
+ * - Arrow keys move between menu items (wrapping).
+ * - Escape closes and returns focus to the trigger.
+ * - Tab closes and lets focus continue naturally.
+ * - Click outside closes the menu.
+ */
+function PostActionMenu({
+  postId,
+  onLike,
+  onTip,
+  isLiked,
+  isTipping,
+  disabled,
+}: {
+  postId: string | number;
+  onLike?: () => void;
+  onTip?: () => void;
+  isLiked?: boolean;
+  isTipping?: boolean;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  const menuId = `post-action-menu-${postId}`;
+
+  // Focus the first menu item when the menu opens.
+  useEffect(() => {
+    if (open) {
+      const first = menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
+      first?.focus();
+    }
+  }, [open]);
+
+  // Close on outside click.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(e.target as Node) &&
+        !triggerRef.current?.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  const handleTriggerKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
+      e.preventDefault();
+      setOpen(true);
+    }
+  };
+
+  const handleMenuKeyDown = (e: React.KeyboardEvent<HTMLUListElement>) => {
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? []
+    );
+    const focused = document.activeElement as HTMLElement;
+    const index = items.indexOf(focused);
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+      return;
+    }
+    if (e.key === "Tab") {
+      // Let Tab move focus out naturally; close the menu first.
+      setOpen(false);
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      items[(index + 1) % items.length]?.focus();
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      items[(index - 1 + items.length) % items.length]?.focus();
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={menuId}
+        aria-label="Post actions"
+        disabled={disabled}
+        onKeyDown={handleTriggerKeyDown}
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex items-center justify-center rounded-md p-1.5 text-[var(--text-muted)] transition-colors hover:bg-gray-100 hover:text-[var(--foreground)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-gray-800"
+      >
+        {/* Ellipsis icon */}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          className="h-5 w-5"
+          aria-hidden="true"
+        >
+          <path d="M6 10a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm4 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm4 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z" />
+        </svg>
+      </button>
+
+      {open && (
+        <ul
+          id={menuId}
+          ref={menuRef}
+          role="menu"
+          aria-label="Post actions"
+          onKeyDown={handleMenuKeyDown}
+          className="absolute right-0 z-20 mt-1 min-w-[10rem] rounded-lg border border-[var(--border)] bg-white py-1 shadow-lg dark:bg-gray-900"
+        >
+          {onLike && (
+            <li role="none">
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  onLike();
+                  close();
+                }}
+                className="flex w-full items-center gap-2 px-4 py-2 text-sm text-[var(--foreground)] hover:bg-gray-100 focus:bg-gray-100 focus:outline-none dark:hover:bg-gray-800 dark:focus:bg-gray-800"
+              >
+                <span aria-hidden="true">{isLiked ? "❤️" : "🤍"}</span>
+                {isLiked ? "Unlike" : "Like"}
+              </button>
+            </li>
+          )}
+          {onTip && (
+            <li role="none">
+              <button
+                role="menuitem"
+                type="button"
+                disabled={isTipping}
+                onClick={() => {
+                  onTip();
+                  close();
+                }}
+                className="flex w-full items-center gap-2 px-4 py-2 text-sm text-[var(--foreground)] hover:bg-gray-100 focus:bg-gray-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-gray-800 dark:focus:bg-gray-800"
+              >
+                <span aria-hidden="true">💰</span>
+                {isTipping ? "Sending tip…" : "Tip creator"}
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function PostCard({
   post,
   query,
@@ -131,7 +299,18 @@ export function PostCard({
         >
           By {formatAuthor(post.author)}
         </span>
-        <time className="text-xs text-[var(--text-muted)]">{formatDate(post)}</time>
+        <div className="flex items-center gap-2">
+          <time className="text-xs text-[var(--text-muted)]">{formatDate(post)}</time>
+          {/* Three-dot action menu — keyboard and pointer accessible */}
+          <PostActionMenu
+            postId={post.id}
+            onLike={onLike}
+            onTip={onTip}
+            isLiked={isLiked}
+            isTipping={isTipping}
+            disabled={disabled}
+          />
+        </div>
       </div>
 
       <p className="whitespace-pre-wrap break-words leading-relaxed text-[var(--foreground)] mb-4 text-base">
@@ -155,6 +334,7 @@ export function PostCard({
         />
       ) : null}
 
+      {/* Inline action bar — kept for quick pointer access; duplicates menu items */}
       <div
         className="flex items-center gap-6 border-t border-[var(--border)]/40 pt-3"
         data-tour={tourAnchor ? "post-actions" : undefined}
@@ -169,6 +349,7 @@ export function PostCard({
               : "text-[var(--text-muted)] hover:text-[var(--accent-coral)]"
           }`}
           aria-label={isLiked ? "Unlike post" : "Like post"}
+          aria-pressed={isLiked}
         >
           <span
             className={`text-lg transition-transform duration-200 ${animateLikeCount ? "scale-110" : "scale-100"}`}
