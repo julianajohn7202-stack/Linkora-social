@@ -12,6 +12,7 @@
     "dev": "cargo watch -x test",
     "format": "cargo fmt",
     "generate:fixtures": "node scripts/generate-error-fixtures.js",
+    "size:summary": "node scripts/wasm-size-summary.js",
     "generate:bindings": "stellar contract bindings typescript --wasm contracts/linkora-contracts/target/wasm32-unknown-unknown/release/linkora_contracts.wasm --output src/ --overwrite"
   },
   "dependencies": {

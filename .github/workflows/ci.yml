@@ -238,6 +238,28 @@ jobs:
           path: |
             packages/contracts/contracts/linkora-contracts/linkora_contracts.wasm
             packages/contracts/dist/build-metadata.json
+
+      - name: Download WASM size baseline artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: contract-wasm-sizes
+          path: packages/contracts/wasm-size-baseline
+
+      - name: Publish WASM size summary
+        run: |
+          if [ -f wasm-size-baseline/wasm-sizes.json ]; then
+            BASELINE_PATH=wasm-size-baseline/wasm-sizes.json node scripts/wasm-size-summary.js
+          else
+            node scripts/wasm-size-summary.js
+          fi
+
+      - name: Upload contract WASM sizes artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: contract-wasm-sizes
+          path: packages/contracts/wasm-sizes.json
           retention-days: 30
 
       - name: Run unit tests
