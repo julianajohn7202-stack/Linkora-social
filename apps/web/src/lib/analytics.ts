@@ -72,7 +72,7 @@ const ORACLE_URL = process.env.NEXT_PUBLIC_ORACLE_URL || "http://localhost:4000"
 
 const STELLAR_GENESIS_MS = new Date("2015-09-01T00:00:00Z").getTime();
 
-function ledgerToDate(ledger: number): Date {
+export function ledgerToDate(ledger: number): Date {
   return new Date(STELLAR_GENESIS_MS + (ledger - 1) * 5000);
 }
 
@@ -91,20 +91,21 @@ export function dateRangeToLedgerRange(days: number): number {
 
 export async function fetchPosts(address: string): Promise<IndexerPost[]> {
   const allPosts: IndexerPost[] = [];
-  let offset = 0;
+  let cursor: number | undefined;
   const limit = 100;
   let hasMore = true;
 
   while (hasMore) {
-    const res = await fetch(
-      `${INDEXER_URL}/api/posts?author=${address}&limit=${limit}&offset=${offset}`
-    );
-    if (!res.ok) break;
+    const params = new URLSearchParams({ author: address, limit: String(limit) });
+    if (cursor !== undefined) params.set("cursor", String(cursor));
+    const res = await fetch(`${INDEXER_URL}/api/posts?${params}`);
+    if (!res.ok) throw new Error("Failed to load posts");
     const data = await res.json();
     const posts: IndexerPost[] = data.posts ?? [];
     allPosts.push(...posts);
-    hasMore = data.has_more ?? false;
-    offset += limit;
+    const nextCursor = posts[posts.length - 1]?.created_ledger;
+    hasMore = Boolean(data.has_more) && nextCursor !== undefined && nextCursor !== cursor;
+    cursor = nextCursor;
   }
 
   return allPosts;
@@ -174,12 +175,14 @@ export async function fetchAttestation(address: string): Promise<AnalyticsAttest
 export function computeAnalytics(
   posts: IndexerPost[],
   attestation: AnalyticsAttestation | null,
-  ledgerRange: number
+  window: number | { start: string; end: string }
 ): AnalyticsData {
   const nowLedger = posts.length > 0 ? Math.max(...posts.map((p) => p.created_ledger)) : 0;
-  const cutoffLedger = nowLedger - ledgerRange;
-
-  const filteredPosts = posts.filter((p) => p.created_ledger >= cutoffLedger);
+  const filteredPosts = posts.filter((post) => {
+    if (typeof window === "number") return post.created_ledger >= nowLedger - window;
+    const date = ledgerToDate(post.created_ledger).toISOString().slice(0, 10);
+    return date >= window.start && date <= window.end;
+  });
 
   const summary = {
     totalTips: attestation?.report.totalTips ?? "0",
