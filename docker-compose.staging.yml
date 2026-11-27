@@ -12,9 +12,14 @@ version: "3.9"
 services:
   # ── Notification service ───────────────────────────────────────────────────
   notification:
+    # NOTIFICATION_IMAGE is set by CI to a digest-pinned reference
+    # (e.g. ghcr.io/org/linkora-notification@sha256:…) so the deployed
+    # container is the exact build verified in CI.  When not set (local dev)
+    # the service falls back to building from source as defined in the base file.
+    image: ${NOTIFICATION_IMAGE:-linkora-notification:latest}
     build:
-      context: ./services/notification
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/notification/Dockerfile
     restart: unless-stopped
     environment:
       NODE_ENV: staging
@@ -41,9 +46,11 @@ services:
 
   # ── Search service ─────────────────────────────────────────────────────────
   search:
+    # SEARCH_IMAGE is set by CI to a digest-pinned reference.
+    image: ${SEARCH_IMAGE:-linkora-search:latest}
     build:
-      context: ./services/search
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/search/Dockerfile
     restart: unless-stopped
     environment:
       NODE_ENV: staging
@@ -70,9 +77,11 @@ services:
 
   # ── Media service ──────────────────────────────────────────────────────────
   media:
+    # MEDIA_IMAGE is set by CI to a digest-pinned reference.
+    image: ${MEDIA_IMAGE:-linkora-media:latest}
     build:
-      context: ./services/media
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/media/Dockerfile
     restart: unless-stopped
     environment:
       NODE_ENV: staging
