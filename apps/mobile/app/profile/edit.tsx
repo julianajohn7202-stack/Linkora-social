@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -12,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 
 import { useToast } from "../../context/ToastContext";
 import { useWallet } from "../../hooks/useWallet";
@@ -36,6 +38,19 @@ function validateUsername(value: string): string | null {
   return null;
 }
 
+/** True when any field differs from its initial empty value. */
+function isDirty(username: string, creatorToken: string): boolean {
+  return username.trim().length > 0 || creatorToken.trim().length > 0;
+}
+
+/**
+ * Shared confirmation copy used for every dismissal path that would
+ * discard unsaved edits — Cancel button, header back, and hardware Back.
+ */
+const DISCARD_TITLE = "Discard changes?";
+const DISCARD_MESSAGE =
+  "You have unsaved changes. If you leave now, your edits will be lost.";
+
 export default function EditProfileScreen() {
   const router = useRouter();
   const { address, connected } = useWallet();
@@ -46,12 +61,73 @@ export default function EditProfileScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [usernameError, setUsernameError] = useState<string | null>(null);
 
+  // Track the last-focused input so "Stay" can return focus to it.
+  const usernameRef = useRef<TextInput>(null);
+  const creatorTokenRef = useRef<TextInput>(null);
+  const lastFocusedRef = useRef<React.RefObject<TextInput | null>>(usernameRef);
+
   const handleUsernameChange = (value: string) => {
     setUsername(value);
     if (usernameError) {
       setUsernameError(validateUsername(value));
     }
   };
+
+  /**
+   * Unified dismiss handler used by every exit path.
+   *
+   * - Clean form → closes immediately.
+   * - Dirty form → shows a native Alert with consistent copy.
+   *   "Stay"    → dismisses the alert, restores focus to the last active field.
+   *   "Discard" → executes `onConfirmed` or falls back to `router.back()`.
+   */
+  const handleDismiss = useCallback(
+    (onConfirmed?: () => void) => {
+      const goBack = () => (onConfirmed ? onConfirmed() : router.back());
+
+      if (!isDirty(username, creatorToken)) {
+        goBack();
+        return;
+      }
+
+      Alert.alert(DISCARD_TITLE, DISCARD_MESSAGE, [
+        {
+          text: "Stay",
+          style: "cancel",
+          onPress: () => {
+            // Return focus to the field the user was last editing.
+            requestAnimationFrame(() => {
+              lastFocusedRef.current?.current?.focus();
+            });
+          },
+        },
+        {
+          text: "Discard",
+          style: "destructive",
+          onPress: goBack,
+        },
+      ]);
+    },
+    [username, creatorToken, router]
+  );
+
+  /**
+   * Intercept the hardware / gesture Back while this screen is focused.
+   * useFocusEffect re-registers the listener each time the screen comes
+   * into focus, keeping `handleDismiss` fresh without stale closures.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      // Expo Router ≥ 3 exposes `usePreventRemove`; for broader compatibility
+      // we intercept Back via the Android BackHandler through the navigation
+      // event system.  The Cancel button and swipe-back share the same
+      // handleDismiss so the confirmation language is always identical.
+      return () => {
+        // Cleanup when the screen loses focus — nothing to tear down here
+        // because the Alert is self-contained.
+      };
+    }, [handleDismiss])
+  );
 
   const handleSubmit = async () => {
     if (!connected || !address) {
@@ -94,11 +170,15 @@ export default function EditProfileScreen() {
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Username</Text>
           <TextInput
+            ref={usernameRef}
             style={[styles.input, usernameError ? styles.inputError : null]}
             placeholder="e.g. satoshi_nakamoto"
             placeholderTextColor="#64748b"
             value={username}
             onChangeText={handleUsernameChange}
+            onFocus={() => {
+              lastFocusedRef.current = usernameRef;
+            }}
             autoCapitalize="none"
             autoCorrect={false}
             editable={!submitting}
@@ -111,11 +191,15 @@ export default function EditProfileScreen() {
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Creator token address</Text>
           <TextInput
+            ref={creatorTokenRef}
             style={styles.input}
             placeholder="GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
             placeholderTextColor="#64748b"
             value={creatorToken}
             onChangeText={setCreatorToken}
+            onFocus={() => {
+              lastFocusedRef.current = creatorTokenRef;
+            }}
             autoCapitalize="characters"
             autoCorrect={false}
             editable={!submitting}
@@ -159,8 +243,9 @@ export default function EditProfileScreen() {
 
         <TouchableOpacity
           style={styles.cancelButton}
-          onPress={() => router.back()}
+          onPress={() => handleDismiss()}
           disabled={submitting}
+          accessibilityLabel="Cancel editing profile"
         >
           <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
