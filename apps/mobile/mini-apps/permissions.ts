@@ -7,7 +7,13 @@ export type BridgePermission =
   | "profile.update"
   | "post.create";
 
-export type BridgeErrorCode = "PermissionDenied" | "UserRejected" | "MethodUnavailable";
+export type BridgeErrorCode =
+  | "PermissionDenied"
+  | "UserRejected"
+  | "MethodUnavailable"
+  | "UnsupportedMethod"
+  | "AppClosed"
+  | "RequestFailed";
 
 export class BridgeError extends Error {
   code: BridgeErrorCode;
