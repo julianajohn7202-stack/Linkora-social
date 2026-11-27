@@ -137,4 +137,3 @@ fn test_set_profile_rename_updates_reverse_lookup() {
         "freed prior username should be available for registration by another user"
     );
 }
-

@@ -161,6 +161,10 @@ log "[3/5] Deploying services: $STAGING_SERVICES ..."
 
 remote "${COMPOSE_CMD} up -d --remove-orphans ${DEPLOY_BUILD_FLAG} ${STAGING_SERVICES}"
 
+if [[ "$DRY_RUN" == "true" ]]; then
+  exit 0
+fi
+
 # ── Step 4: Health check ─────────────────────────────────────────────────────
 
 log "[4/5] Waiting for services to become healthy ..."
@@ -176,7 +180,7 @@ for service in $STAGING_SERVICES; do
     status=$(remote "docker inspect --format='{{.State.Health.Status}}' \
       \$(docker compose -p ${COMPOSE_PROJECT} ps -q ${service} 2>/dev/null) 2>/dev/null || echo unknown" 2>/dev/null || echo "unknown")
 
-    if [[ "$status" == *"healthy"* ]]; then
+    if [[ "$status" == "healthy" ]]; then
       log "  ✓ $service is healthy."
       break
     fi
@@ -206,7 +210,9 @@ DEPLOY_ENV="${DEPLOY_ENV:-staging}"
 # Collect image digests for deployed services (best-effort; empty when skipped
 # or when the Docker daemon is unavailable).
 IMAGE_DIGESTS="{}"
-if [[ "$SKIP_BUILD" != "true" ]] && command -v docker &>/dev/null; then
+if [[ -n "$DEPLOY_BUILD_FLAG" ]]; then
+  IMAGE_DIGESTS=$(printf '{"notification":"%s","search":"%s","media":"%s"}'     "$NOTIFICATION_IMAGE" "$SEARCH_IMAGE" "$MEDIA_IMAGE")
+elif [[ "$SKIP_BUILD" != "true" ]] && command -v docker &>/dev/null; then
   DIGEST_PAIRS=""
   for service in $STAGING_SERVICES; do
     digest=$(docker inspect \

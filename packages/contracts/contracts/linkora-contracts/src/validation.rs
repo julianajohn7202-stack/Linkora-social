@@ -367,4 +367,3 @@ mod tests {
         validate_post_content_len(&env, &content, MAX_CONTENT_LEN);
     }
 }
-

@@ -1600,4 +1600,3 @@ To regenerate or verify the cross-language fixtures from contract tests:
    Update `packages/sdk/src/__tests__/fixtures/events.fixture.json` with the representative payload structure.
 4. **Run SDK Decoder Test**:
    The decoder test in `packages/sdk/src/__tests__/events.test.ts` imports the fixture, runs `parseContractEvent`, and validates that all fields round-trip with matching values.
-

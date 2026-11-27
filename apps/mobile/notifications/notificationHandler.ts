@@ -1,5 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
+import { initDatabase, reconcileNotifications } from "../utils/db";
 import { parseDeepLink } from "../utils/deepLinks";
 
 // Configure how notifications are handled when the app is in the foreground
@@ -93,14 +94,26 @@ function navigateForNotification(data: NotificationPayload): void {
   router.push((fallback ?? FALLBACK_ROUTE) as Parameters<typeof router.push>[0]);
 }
 
+async function cacheNotification(notification: Notifications.Notification): Promise<void> {
+  const { request, date } = notification;
+  const { body, title, data } = request.content;
+  const type = data?.type;
+  if (typeof type !== "string" || !request.identifier) return;
+  await initDatabase();
+  await reconcileNotifications([
+    { id: request.identifier, type, body: body ?? title ?? "", read: false, createdAt: date },
+  ]);
+}
+
 export function setupNotificationListeners() {
   // Listener for foreground notifications
   const notificationListener = Notifications.addNotificationReceivedListener((notification) => {
-    console.log("Notification received in foreground:", notification);
+    void cacheNotification(notification).catch(() => {});
   });
 
   // Listener for notification taps (when user interacts with a notification)
   const responseListener = Notifications.addNotificationResponseReceivedListener((response) => {
+    void cacheNotification(response.notification).catch(() => {});
     const data = response.notification.request.content.data as unknown as NotificationPayload;
     console.log("Notification response (tap) received:", data);
 

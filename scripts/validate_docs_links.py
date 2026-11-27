@@ -25,7 +25,7 @@ def generate_slug_variants(text: str) -> Set[str]:
     raw = re.sub(r'<[^>]+>', '', raw)
     # Strip symbols/punctuation except word chars, whitespace, and hyphens
     cleaned = re.sub(r'[^\w\s-]', '', raw)
-    
+
     # Variant 1: replace each space with a hyphen (preserves multiple dashes from stripped em-dashes)
     slug_spaces = re.sub(r'\s', '-', cleaned).strip('-')
     if slug_spaces:
