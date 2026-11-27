@@ -18,10 +18,12 @@ services:
     networks:
       - database
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-linkora}"]
-      interval: 10s
+      # Connecting over TCP (-h 127.0.0.1) guarantees readiness only once the actual
+      # server is up and listening after empty-volume cold-boot initdb finishes.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-linkora} -d ${POSTGRES_DB:-linkora} -h 127.0.0.1"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 10s
     deploy:
       resources:
@@ -44,7 +46,7 @@ services:
       - backend
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
       start_period: 5s
@@ -252,6 +254,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       PORT: 3003
+      DATABASE_URL: postgresql://${POSTGRES_USER:-linkora}:${POSTGRES_PASSWORD:-linkora}@postgres:5432/${POSTGRES_DB:-linkora}
       HOST: ${MEDIA_HOST:-0.0.0.0}
       MEDIA_BUCKET: ${MEDIA_BUCKET:-linkora-media}
       MEDIA_ENDPOINT: ${MEDIA_ENDPOINT:-}
@@ -265,7 +268,10 @@ services:
       - "${MEDIA_HOST_PORT:-3003}:3003"
     networks:
       - backend
+      - database
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -287,6 +293,12 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
     networks:
       - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:16686/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 networks:
   frontend:
