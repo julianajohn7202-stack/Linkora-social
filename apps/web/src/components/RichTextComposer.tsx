@@ -39,6 +39,8 @@ export function RichTextComposer({
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([]);
+  const [uploadStatus, setUploadStatus] = useState<Record<number, 'uploading' | 'done' | 'error'>>({});
+  const [liveMessage, setLiveMessage] = useState("");
   const [showPoll, setShowPoll] = useState(false);
   const [pollOptions, setPollOptions] = useState<PollOption[]>([
     { id: "1", text: "" },
@@ -46,6 +48,10 @@ export function RichTextComposer({
   ]);
   const [showPreview, setShowPreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<Record<number, "uploading" | "done" | "error">>(
+    {}
+  );
+  const [liveAnnouncement, setLiveAnnouncement] = useState("");
 
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -178,13 +184,39 @@ export function RichTextComposer({
     );
 
     if (validFiles.length > 0) {
-      setAttachments((prev) => [...prev, ...validFiles]);
+      setAttachments((prev) => {
+        const startIndex = prev.length;
+        // Mark each new file as uploading
+        setUploadStatus((s) => {
+          const next = { ...s };
+          validFiles.forEach((_, i) => {
+            next[startIndex + i] = "uploading";
+          });
+          return next;
+        });
+        return [...prev, ...validFiles];
+      });
 
-      // Create previews
-      validFiles.forEach((file) => {
+      // Create previews and transition status to done
+      validFiles.forEach((file, i) => {
         const reader = new FileReader();
         reader.onloadend = () => {
-          setAttachmentPreviews((prev) => [...prev, reader.result as string]);
+          setAttachmentPreviews((prev) => {
+            const nextIndex = prev.length; // index this file will occupy
+            setUploadStatus((s) => ({ ...s, [nextIndex]: "done" }));
+            setLiveAnnouncement(`${file.name} uploaded successfully`);
+            return [...prev, reader.result as string];
+          });
+        };
+        reader.onerror = () => {
+          setAttachments((prev) => {
+            const idx = prev.findIndex((f) => f === file);
+            if (idx !== -1) {
+              setUploadStatus((s) => ({ ...s, [idx]: "error" }));
+              setLiveAnnouncement(`${file.name} upload failed`);
+            }
+            return prev;
+          });
         };
         reader.readAsDataURL(file);
       });
@@ -195,6 +227,15 @@ export function RichTextComposer({
   const removeAttachment = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
     setAttachmentPreviews((prev) => prev.filter((_, i) => i !== index));
+    setUploadStatus((prev) => {
+      const next: Record<number, "uploading" | "done" | "error"> = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const n = Number(k);
+        if (n < index) next[n] = v;
+        else if (n > index) next[n - 1] = v;
+      });
+      return next;
+    });
   }, []);
 
   // Handle poll option changes
@@ -282,6 +323,23 @@ export function RichTextComposer({
 
   return (
     <div className="rich-text-composer">
+      {/* Visually-hidden live region for upload announcements */}
+      <div
+        role="status"
+        aria-live="assertive"
+        aria-atomic="true"
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          overflow: "hidden",
+          clip: "rect(0 0 0 0)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {liveAnnouncement}
+      </div>
+
       {/* Toolbar */}
       <div className="composer-toolbar">
         <button
@@ -290,6 +348,7 @@ export function RichTextComposer({
           className="toolbar-btn"
           disabled={disabled}
           title="Add media"
+          aria-label="Add media"
         >
           📎
         </button>
@@ -300,6 +359,7 @@ export function RichTextComposer({
           multiple
           onChange={handleFileSelect}
           className="hidden"
+          aria-hidden="true"
         />
         <button
           type="button"
@@ -307,6 +367,7 @@ export function RichTextComposer({
           className="toolbar-btn"
           disabled={disabled}
           title="Add poll"
+          aria-label="Add poll"
         >
           📊
         </button>
@@ -316,6 +377,7 @@ export function RichTextComposer({
           className="toolbar-btn"
           disabled={disabled || !content}
           title="Preview"
+          aria-label="Preview post"
         >
           👁️
         </button>
@@ -370,18 +432,33 @@ export function RichTextComposer({
       {/* Attachments Preview */}
       {attachmentPreviews.length > 0 && (
         <div className="attachments-preview">
-          {attachmentPreviews.map((preview, index) => (
-            <div key={index} className="attachment-item">
-              <img src={preview} alt={`Attachment ${index + 1}`} />
-              <button
-                type="button"
-                onClick={() => removeAttachment(index)}
-                className="attachment-remove"
+          {attachmentPreviews.map((preview, index) => {
+            const fileName = attachments[index]?.name ?? `Attachment ${index + 1}`;
+            const status = uploadStatus[index];
+            const statusLabel =
+              status === "done"
+                ? "uploaded"
+                : status === "error"
+                  ? "upload failed"
+                  : "uploading";
+            return (
+              <div
+                key={index}
+                className="attachment-item"
+                aria-label={`${fileName}: ${statusLabel}`}
               >
-                ✕
-              </button>
-            </div>
-          ))}
+                <img src={preview} alt={fileName} />
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(index)}
+                  className="attachment-remove"
+                  aria-label={`Remove ${fileName}`}
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
