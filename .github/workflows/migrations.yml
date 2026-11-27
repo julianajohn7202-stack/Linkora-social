@@ -27,6 +27,8 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Run migration test suite
+        env:
+          MIGRATION_TIMING_REPORT: ${{ runner.temp }}/migration-timings.md
         run: bash tests/migrations/test-migrations.sh
 
       - name: Verify migration count (016–020 must be present)
@@ -49,3 +51,6 @@ jobs:
           echo "- Total migration files: **$TOTAL**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Latest migrations: 016_reputation_scores, 017_creator_analytics, 018_search_index, 019_media_attachments, 020_outbound_webhooks" >> "$GITHUB_STEP_SUMMARY"
           echo "- Schema snapshot: \`tests/migrations/expected-schema.sql\`" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f "$RUNNER_TEMP/migration-timings.md" ]]; then
+            cat "$RUNNER_TEMP/migration-timings.md" >> "$GITHUB_STEP_SUMMARY"
+          fi

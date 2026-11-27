@@ -385,6 +385,100 @@ else
 fi
 rm -f err.log
 
+step "Rehearsing a profile index migration with a synthetic write lock"
+REHEARSAL_DB="$DB"_rehearsal
+REHEARSAL_MIGRATION="020_profile_username_lookup.sql"
+REHEARSAL_PSQL=(
+    "${COMPOSE[@]}" exec -T "$SERVICE"
+    psql "${PGHOST_ARG[@]}" -X -q -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$REHEARSAL_DB"
+)
+
+rehearse_migration() {
+    local blocker_pid wait_ms execution_ms
+    psql_value "CREATE DATABASE $REHEARSAL_DB OWNER $DB_USER" >/dev/null || return 1
+    "${REHEARSAL_PSQL[@]}" < "$MIG_DIR/001_profiles.sql" || return 1
+    "${REHEARSAL_PSQL[@]}" -c "
+      INSERT INTO profiles (address, username)
+      SELECT 'profile-' || id, 'user-' || id FROM generate_series(1, 10000) AS id
+    " || return 1
+
+    # Hold a writer lock until PostgreSQL sees the index migration waiting.
+    "${REHEARSAL_PSQL[@]}" >/dev/null <<'SQL' &
+BEGIN;
+SET LOCAL statement_timeout = '8s';
+LOCK TABLE profiles IN ROW EXCLUSIVE MODE;
+DO $$
+BEGIN
+    LOOP
+        EXIT WHEN EXISTS (
+            SELECT FROM pg_locks
+            WHERE relation = 'profiles'::regclass AND mode = 'ShareLock' AND NOT granted
+        );
+        PERFORM pg_sleep(0.05);
+    END LOOP;
+    PERFORM pg_sleep(0.5);
+END
+$$;
+COMMIT;
+SQL
+    blocker_pid=$!
+
+    local ready=0
+    for _ in {1..30}; do
+        if [[ $("${REHEARSAL_PSQL[@]}" -Atc "
+            SELECT EXISTS (
+                SELECT FROM pg_locks WHERE relation = 'profiles'::regclass
+                  AND mode = 'RowExclusiveLock' AND granted
+            )") == t ]]; then
+            ready=1
+            break
+        fi
+        sleep 0.1
+    done
+
+    local timings status=0
+    if (( ready )); then
+        timings=$(
+            {
+                cat <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '10s';
+SELECT clock_timestamp() AS wait_started \gset
+LOCK TABLE profiles IN SHARE MODE;
+SELECT clock_timestamp() AS execution_started \gset
+SQL
+                cat "$MIG_DIR/$REHEARSAL_MIGRATION"
+                cat <<'SQL'
+
+SELECT round(extract(epoch FROM (:'execution_started'::timestamptz - :'wait_started'::timestamptz)) * 1000),
+       round(extract(epoch FROM (clock_timestamp() - :'execution_started'::timestamptz)) * 1000);
+COMMIT;
+SQL
+            } | "${REHEARSAL_PSQL[@]}" -At
+        ) || status=1
+    else
+        status=1
+    fi
+
+    wait "$blocker_pid" || status=1
+    if (( status )); then
+        printf '\n### Migration lock rehearsal\n\n- \x60%s\x60: synthetic lock rehearsal failed (lock timeout: 5 s).\n' "$REHEARSAL_MIGRATION"
+        return 1
+    fi
+
+    IFS='|' read -r wait_ms execution_ms <<< "$timings"
+    printf '\n### Migration lock rehearsal\n\n'
+    printf '| Migration | Synthetic lock wait (ms) | Execution (ms) | Lock timeout |\n'
+    printf '| --- | ---: | ---: | ---: |\n'
+    printf '| \x60%s\x60 | %s | %s | 5 s |\n' "$REHEARSAL_MIGRATION" "$wait_ms" "$execution_ms"
+    [[ "$wait_ms" =~ ^[0-9]+$ && "$execution_ms" =~ ^[0-9]+$ ]] && (( wait_ms >= 400 && wait_ms <= 5000 ))
+}
+
+if ! rehearse_migration | tee "${MIGRATION_TIMING_REPORT:-/dev/null}"; then
+    fail "$REHEARSAL_MIGRATION did not produce a bounded synthetic lock wait"
+fi
+
 ELAPSED=$((SECONDS - START_TS))
 echo
 echo "======================================================================"
