@@ -9570,3 +9570,115 @@ fn test_author_post_pagination_across_pages_before_and_after_deletion() {
     assert!(offset_beyond_end_after.is_empty());
 }
 
+// ── Issue #613: Exercise profile cleanup over multiple batches ────────────────
+
+#[test]
+fn test_exercise_profile_cleanup_over_multiple_batches() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _) = setup_contract(&env);
+
+    let user = Address::generate(&env);
+    client.set_profile(
+        &user,
+        &String::from_str(&env, "cleanup_user"),
+        &Address::generate(&env),
+    );
+
+    // Create a fixture with more related entries than one cleanup call can remove:
+    // 4 followers, 3 following, 3 authored posts = 10 total related entries.
+    let num_followers = 4;
+    let mut followers = std::vec::Vec::new();
+    for i in 0..num_followers {
+        let follower = Address::generate(&env);
+        client.set_profile(
+            &follower,
+            &String::from_str(&env, &alloc::format!("flw_{i}")),
+            &Address::generate(&env),
+        );
+        client.follow(&follower, &user);
+        followers.push(follower);
+    }
+    assert_eq!(client.get_followers(&user, &0, &10).len(), 4);
+
+    let num_following = 3;
+    let mut followees = std::vec::Vec::new();
+    for i in 0..num_following {
+        let followee = Address::generate(&env);
+        client.set_profile(
+            &followee,
+            &String::from_str(&env, &alloc::format!("flee_{i}")),
+            &Address::generate(&env),
+        );
+        client.follow(&user, &followee);
+        followees.push(followee);
+    }
+    assert_eq!(client.get_following(&user, &0, &10).len(), 3);
+
+    let num_posts = 3;
+    let mut posts = std::vec::Vec::new();
+    for i in 0..num_posts {
+        let post_id = client.create_post(
+            &user,
+            &String::from_str(&env, &alloc::format!("post_{i}")),
+        );
+        posts.push(post_id);
+    }
+    assert_eq!(client.get_posts_by_author(&user, &0, &10).len(), 3);
+
+    // Total related entries = 4 + 3 + 3 = 10 entries.
+    // Delete profile to place tombstone for lazy cleanup.
+    client.delete_profile(&user);
+    assert!(client.get_profile(&user).is_none());
+
+    // We clean up with bounded batch limit = 3 entries per call.
+    let batch_limit = 3u32;
+
+    // ── Batch 1 (limit 3): Removes 3 followers (1 follower, 3 following, 3 posts remaining) ──
+    client.batch_cleanup_profile(&user, &batch_limit);
+    // Acceptance criterion: Each batch respects the supplied entry limit.
+    assert_eq!(client.get_followers(&user, &0, &10).len(), 1);
+    assert_eq!(client.get_following(&user, &0, &10).len(), 3);
+    assert_eq!(client.get_posts_by_author(&user, &0, &10).len(), 3);
+
+    // ── Batch 2 (limit 3): Removes remaining 1 follower + 2 following (0 followers, 1 following, 3 posts remaining) ──
+    client.batch_cleanup_profile(&user, &batch_limit);
+    assert_eq!(client.get_followers(&user, &0, &10).len(), 0);
+    assert_eq!(client.get_following(&user, &0, &10).len(), 1);
+    assert_eq!(client.get_posts_by_author(&user, &0, &10).len(), 3);
+
+    // ── Batch 3 (limit 3): Removes remaining 1 following + 2 posts (0 followers, 0 following, 1 post remaining) ──
+    client.batch_cleanup_profile(&user, &batch_limit);
+    assert_eq!(client.get_followers(&user, &0, &10).len(), 0);
+    assert_eq!(client.get_following(&user, &0, &10).len(), 0);
+    assert_eq!(client.get_posts_by_author(&user, &0, &10).len(), 1);
+
+    // ── Batch 4 (limit 3): Removes final 1 post (0 entries remaining, completes cleanup) ──
+    client.batch_cleanup_profile(&user, &batch_limit);
+
+    // Acceptance criterion: A completed cleanup reaches the documented terminal state
+    assert_eq!(client.get_followers(&user, &0, &10).len(), 0);
+    assert_eq!(client.get_following(&user, &0, &10).len(), 0);
+    assert_eq!(client.get_posts_by_author(&user, &0, &10).len(), 0);
+    for post_id in posts.iter() {
+        assert!(client.get_post(post_id).is_none());
+    }
+
+    // Tombstone must be removed from persistent storage at terminal state
+    env.as_contract(&client.address, || {
+        assert!(
+            !env.storage()
+                .persistent()
+                .has(&StorageKey::DeletedProfile(user.clone())),
+            "profile tombstone must be removed at terminal state"
+        );
+    });
+
+    // Acceptance criterion: An extra call behaves predictably
+    let extra_call = client.try_batch_cleanup_profile(&user, &batch_limit);
+    assert!(
+        extra_call.is_err(),
+        "extra cleanup call after completed terminal state must return error"
+    );
+}
+
