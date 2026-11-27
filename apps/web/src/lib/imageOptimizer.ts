@@ -365,3 +365,46 @@ export async function optimizeImage(
 
   return { file: webp, lqip, width, height };
 }
+
+/**
+ * Upload an image file to the media endpoint and return the CDN URL.
+ *
+ * Posts the file as multipart form-data to `POST /api/media` and returns
+ * the `url` field from the JSON response. Pair with {@link optimizeImage}
+ * to resize and convert before uploading.
+ *
+ * **Browser-only.** Must be called from a client component or event handler,
+ * not during SSR.
+ *
+ * @param file - The image file to upload. Typically the output of
+ *   {@link resizeImage} or the `file` field returned by {@link optimizeImage}.
+ * @returns The CDN URL string of the stored image.
+ * @throws {Error} When the server responds with a non-2xx status or omits the
+ *   `url` field.
+ *
+ * @example
+ * ```ts
+ * const { file } = await optimizeImage(rawFile, { maxDimension: 1200 });
+ * const cdnUrl = await uploadImage(file);
+ * ```
+ */
+export async function uploadImage(file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch("/api/media", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Image upload failed (${response.status})${text ? `: ${text}` : ""}`);
+  }
+
+  const data = (await response.json()) as { url?: string };
+  if (!data.url) {
+    throw new Error("Media API did not return a URL");
+  }
+  return data.url;
+}
