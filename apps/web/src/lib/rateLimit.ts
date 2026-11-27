@@ -66,6 +66,11 @@ export interface RateLimitRule {
   windowMs: number;
 }
 
+export interface RateLimit {
+  maxActions: number;
+  windowMs: number;
+}
+
 export type ActionType = "post" | "comment" | "like" | "follow" | "tip" | "message";
 
 /**
@@ -167,10 +172,13 @@ export function setCustomRules(rules: Partial<Record<string, RateLimitRule>> | n
   customRulesOverride = rules;
 }
 
-function getRule(action: string, customRules?: Record<string, RateLimitRule>): RateLimitRule {
-  if (customRules && customRules[action]) {
-    return customRules[action];
+function getRule(action: string, customRules?: Record<string, RateLimitRule> | RateLimit): RateLimitRule {
+  if (customRules && typeof customRules.maxActions === "number") {
+    const { maxActions, windowMs } = customRules as RateLimit;
+    return { limit: maxActions, windowMs };
   }
+  const actionRule = (customRules as Record<string, RateLimitRule> | undefined)?.[action];
+  if (actionRule) return actionRule;
   if (customRulesOverride && customRulesOverride[action]) {
     return customRulesOverride[action]!;
   }
@@ -229,7 +237,7 @@ function getActiveTimestamps(action: string, windowMs: number, now: number): num
  * @param rules - Optional custom rule overrides
  * @returns true if the action is allowed, false if rate limit is reached
  */
-export function isAllowed(action: string, rules?: Record<string, RateLimitRule>): boolean {
+export function isAllowed(action: string, rules?: Record<string, RateLimitRule> | RateLimit): boolean {
   const rule = getRule(action, rules);
   const now = Date.now();
   const active = getActiveTimestamps(action, rule.windowMs, now);
@@ -242,8 +250,9 @@ export function isAllowed(action: string, rules?: Record<string, RateLimitRule>)
  * @param action - Action identifier
  * @param timestamp - Optional custom timestamp (defaults to Date.now())
  */
-export function recordAction(action: string, timestamp: number = Date.now()): void {
-  const rule = getRule(action);
+export function recordAction(action: string, timestampOrLimit: number | RateLimit = Date.now()): void {
+  const timestamp = typeof timestampOrLimit === "number" ? timestampOrLimit : Date.now();
+  const rule = getRule(action, typeof timestampOrLimit === "number" ? undefined : timestampOrLimit);
   const active = getActiveTimestamps(action, rule.windowMs, timestamp);
   active.push(timestamp);
   saveTimestamps(action, active);
@@ -256,7 +265,7 @@ export function recordAction(action: string, timestamp: number = Date.now()): vo
  * @param rules - Optional custom rule overrides
  * @returns Number of actions remaining before rate limiting kicks in
  */
-export function getRemainingActions(action: string, rules?: Record<string, RateLimitRule>): number {
+export function getRemainingActions(action: string, rules?: Record<string, RateLimitRule> | RateLimit): number {
   const rule = getRule(action, rules);
   const now = Date.now();
   const active = getActiveTimestamps(action, rule.windowMs, now);
