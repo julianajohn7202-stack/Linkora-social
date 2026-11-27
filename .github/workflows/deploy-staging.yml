@@ -198,6 +198,16 @@ jobs:
           DEPLOY_ENV: staging
         run: bash scripts/deploy_staging.sh
 
+      - name: Check staging indexer advancement
+        env:
+          STAGING_HOST: ${{ vars.STAGING_HOST }}
+          STAGING_USER: ${{ vars.STAGING_USER }}
+          COMPOSE_PROJECT: linkora-staging
+          SAMPLING_WINDOW_SECONDS: 60
+          SAMPLE_INTERVAL_SECONDS: 10
+          MAX_CHECKPOINT_AGE_SEC: 120
+        run: bash scripts/check_staging_indexer_advancement.sh
+
       - name: Upload deployment manifest
         if: success()
         uses: actions/upload-artifact@v4
