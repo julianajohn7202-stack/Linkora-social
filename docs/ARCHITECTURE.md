@@ -12,6 +12,7 @@ This document describes the major components of the Linkora platform and how the
 4. [Transaction lifecycle troubleshooting](#4-transaction-lifecycle-troubleshooting)
 5. [Web and mobile deep links](#5-web-and-mobile-deep-links)
 6. [Database ownership](#6-database-ownership)
+7. [Persistent data inventory](PERSISTENT_DATA_INVENTORY.md)
 
 ---
 
