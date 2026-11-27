@@ -123,6 +123,7 @@ export default function AnalyticsPage() {
                 <button
                   key={d}
                   onClick={() => setDateRange(d)}
+                  aria-pressed={dateRange === d}
                   className={`px-4 py-2 text-sm font-medium transition-colors ${
                     dateRange === d
                       ? "bg-[var(--accent-coral)] text-white"
@@ -144,6 +145,9 @@ export default function AnalyticsPage() {
             </button>
           </div>
         </div>
+
+        {/* Date range label — always shown so the interval is unambiguous */}
+        <DateRangeLabel days={dateRange} />
 
         {state.status === "loading" && (
           <div className="space-y-6" aria-label="Loading creator analytics" aria-busy="true">
@@ -233,8 +237,13 @@ function Dashboard({ data }: { data: AnalyticsData }) {
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={engagementOverTime}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="date" tick={{ fontSize: 12, fill: "var(--text-muted)" }} />
-              <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11, fill: "var(--text-muted)" }}
+                tickFormatter={formatChartDate}
+                interval="preserveStartEnd"
+              />
+              <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} width={36} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: "var(--bg-secondary)",
@@ -242,6 +251,7 @@ function Dashboard({ data }: { data: AnalyticsData }) {
                   borderRadius: "8px",
                   color: "var(--text-primary)",
                 }}
+                labelFormatter={(label) => `Date: ${label} (UTC)`}
               />
               <Line
                 type="monotone"
@@ -260,8 +270,13 @@ function Dashboard({ data }: { data: AnalyticsData }) {
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={followerGrowth}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="date" tick={{ fontSize: 12, fill: "var(--text-muted)" }} />
-              <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11, fill: "var(--text-muted)" }}
+                tickFormatter={formatChartDate}
+                interval="preserveStartEnd"
+              />
+              <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} width={36} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: "var(--bg-secondary)",
@@ -269,6 +284,7 @@ function Dashboard({ data }: { data: AnalyticsData }) {
                   borderRadius: "8px",
                   color: "var(--text-primary)",
                 }}
+                labelFormatter={(label) => `Date: ${label} (UTC)`}
               />
               <Line
                 type="monotone"
@@ -287,8 +303,13 @@ function Dashboard({ data }: { data: AnalyticsData }) {
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={tipEarnings}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="date" tick={{ fontSize: 12, fill: "var(--text-muted)" }} />
-              <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11, fill: "var(--text-muted)" }}
+                tickFormatter={formatChartDate}
+                interval="preserveStartEnd"
+              />
+              <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} width={36} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: "var(--bg-secondary)",
@@ -296,6 +317,7 @@ function Dashboard({ data }: { data: AnalyticsData }) {
                   borderRadius: "8px",
                   color: "var(--text-primary)",
                 }}
+                labelFormatter={(label) => `Date: ${label} (UTC)`}
               />
               <Bar dataKey="earnings" fill="#7c3aed" radius={[4, 4, 0, 0]} name="Tips" />
             </BarChart>
@@ -440,4 +462,47 @@ function ChartCard({
       {children}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Date range label — shown below the range selector so the interval is always
+// visible without hovering. Dates are UTC (matching ledgerToDate in analytics.ts).
+// ---------------------------------------------------------------------------
+
+function formatRangeDate(d: Date): string {
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function DateRangeLabel({ days }: { days: number }) {
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  return (
+    <p
+      className="text-xs text-[var(--text-muted)]"
+      aria-label={`Showing data from ${formatRangeDate(start)} to ${formatRangeDate(end)} UTC`}
+      data-testid="date-range-label"
+    >
+      {formatRangeDate(start)} – {formatRangeDate(end)}{" "}
+      <span className="text-[var(--text-muted)] opacity-60">(UTC)</span>
+    </p>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Chart tick formatter — produces "1 Jun" style labels that stay legible on
+// narrow screens without truncating or overlapping.
+// ---------------------------------------------------------------------------
+
+function formatChartDate(isoDate: string): string {
+  try {
+    const d = new Date(isoDate + "T00:00:00Z");
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  } catch {
+    return isoDate;
+  }
 }
