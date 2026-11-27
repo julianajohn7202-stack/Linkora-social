@@ -1,17 +1,20 @@
 import {
   addOutboxDmMessage,
   confirmPendingPost,
+  getCachedPostsByIds,
   getDmSyncCursor,
   getPendingPosts,
   markDmMessageFailed,
   markPendingPostFailed,
   mergeDmDeltas,
+  reconcilePosts,
   setDmSyncCursor,
 } from "../db";
 import {
   computeCiphertextHash,
   DmClient,
   DmSourceMessage,
+  fetchAndCachePosts,
   reconcileDmThread,
   sendDmMessageWithOutbox,
   syncPendingPosts,
@@ -21,7 +24,7 @@ import {
 jest.mock("../db", () => ({
   addOutboxDmMessage: jest.fn(),
   confirmPendingPost: jest.fn(),
-  getCachedPostById: jest.fn(),
+  getCachedPostsByIds: jest.fn(),
   getDmSyncCursor: jest.fn(),
   getPendingPosts: jest.fn(),
   markDmMessageFailed: jest.fn(),
@@ -31,6 +34,8 @@ jest.mock("../db", () => ({
   setDmSyncCursor: jest.fn(),
 }));
 
+const mockedGetCachedPostsByIds = jest.mocked(getCachedPostsByIds);
+const mockedReconcilePosts = jest.mocked(reconcilePosts);
 const mockedGetDmSyncCursor = getDmSyncCursor as jest.Mock;
 const mockedMergeDmDeltas = mergeDmDeltas as jest.Mock;
 const mockedSetDmSyncCursor = setDmSyncCursor as jest.Mock;
@@ -180,7 +185,8 @@ describe("sendDmMessageWithOutbox", () => {
       ...outboxMessage,
       syncStatus: "failed",
       errorMessage: "401 invalid signature",
-});
+    });
+  });
 });
 
 describe("syncPendingPosts", () => {
@@ -215,7 +221,7 @@ describe("syncPendingPosts", () => {
     mockedGetPendingPosts.mockResolvedValue([pendingPost]);
     mockedConfirmPendingPost.mockResolvedValue(undefined);
     mockedMarkPendingPostFailed.mockResolvedValue(undefined);
-    
+
     // Mock fetch for indexer
     global.fetch = jest.fn();
   });
@@ -245,7 +251,7 @@ describe("syncPendingPosts", () => {
     expect(mockedMarkPendingPostFailed).not.toHaveBeenCalled();
 
     // Verify the ID is a numeric string (real post ID), not a timestamp
-    const confirmedId = (mockedConfirmPendingPost.mock.calls[0][1] as string);
+    const confirmedId = mockedConfirmPendingPost.mock.calls[0][1] as string;
     expect(confirmedId).toBe("42");
     expect(Number(confirmedId)).toBeGreaterThan(0);
     // Should NOT be a timestamp (which would be > 1e12)
@@ -317,7 +323,7 @@ describe("syncPendingPosts", () => {
 
     await syncPendingPosts(options);
 
-    const confirmedId = (mockedConfirmPendingPost.mock.calls[0][1] as string);
+    const confirmedId = mockedConfirmPendingPost.mock.calls[0][1] as string;
     // The confirmed ID should be the real indexer ID "100", not a timestamp
     expect(confirmedId).toBe("100");
     // A Date.now() timestamp would be ~1.7e12 (year 2024+)
@@ -331,8 +337,14 @@ describe("syncPendingPosts", () => {
 
     const mockFetch = global.fetch as jest.Mock;
     mockFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ posts: [{ id: "1", author, content: "post 1" }] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ posts: [{ id: "2", author, content: "post 2" }] }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ posts: [{ id: "1", author, content: "post 1" }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ posts: [{ id: "2", author, content: "post 2" }] }),
+      });
 
     await syncPendingPosts(options);
 
@@ -457,7 +469,7 @@ describe("fetchAndCachePosts", () => {
       content: "Content unavailable offline",
       username: "GAUTHO...HOR2",
     });
-    expect(mockedReconcilePosts).toHaveBeenCalledWith([post]);
+    expect(mockedReconcilePosts).toHaveBeenCalledWith([post], { replace: true });
   });
 
   it("throws and skips the cache lookup when the indexer request fails", async () => {

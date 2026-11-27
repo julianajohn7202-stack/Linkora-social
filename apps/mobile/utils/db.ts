@@ -183,6 +183,10 @@ export async function getCachedPostById(id: string): Promise<Post | null> {
   return row ? rowToPost(row) : null;
 }
 
+export async function deleteCachedPost(id: string): Promise<void> {
+  await db.runAsync("DELETE FROM cached_posts WHERE id = ?", [id]);
+}
+
 /**
  * Retrieves multiple cached posts by ID in a single query, keyed by ID.
  * IDs with no cached row are simply absent from the returned map.
@@ -216,8 +220,15 @@ export async function getCachedPostsByIds(ids: string[]): Promise<Map<string, Po
  * rows, and one stale-eviction delete — instead of two `runAsync` calls per
  * post inside the transaction.
  */
-export async function reconcilePosts(remotePosts: Post[]): Promise<void> {
-  if (remotePosts.length === 0) return;
+export async function reconcilePosts(
+  remotePosts: Post[],
+  options?: { replace: boolean }
+): Promise<void> {
+  if (remotePosts.length === 0) {
+    if (options?.replace)
+      await db.runAsync("DELETE FROM cached_posts WHERE sync_status = 'synced'");
+    return;
+  }
 
   await db.withTransactionAsync(async () => {
     const createdAt = Math.floor(Date.now() / 1000);
@@ -269,8 +280,8 @@ export async function reconcilePosts(remotePosts: Post[]): Promise<void> {
       deleteParams
     );
 
-    // Evict stale synced rows that are no longer in the remote set.
-    if (remotePosts.length > 0) {
+    // A subsequent page adds to the cache without evicting earlier pages.
+    if (options?.replace !== false) {
       const remoteIds = remotePosts.map(() => "?").join(",");
       await db.runAsync(
         `DELETE FROM cached_posts WHERE sync_status = 'synced' AND id NOT IN (${remoteIds})`,
@@ -327,13 +338,7 @@ export async function reconcileNotifications(remote: Notification[]): Promise<vo
 
   await db.withTransactionAsync(async () => {
     const placeholders = remote.map(() => "(?, ?, ?, ?, ?)").join(", ");
-    const params = remote.flatMap((n) => [
-      n.id,
-      n.type,
-      n.body,
-      n.read ? 1 : 0,
-      n.createdAt,
-    ]);
+    const params = remote.flatMap((n) => [n.id, n.type, n.body, n.read ? 1 : 0, n.createdAt]);
     await db.runAsync(
       `INSERT INTO notifications (id, type, body, read, created_at)
        VALUES ${placeholders}

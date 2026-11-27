@@ -31,7 +31,7 @@ function SkeletonList() {
 export default function FeedScreen() {
   const router = useRouter();
   const { theme } = useTheme();
-  const { posts, loading, error, loadMore, refresh } = useFeed();
+  const { posts, loading, refreshing, loadingMore, error, loadMore, refresh } = useFeed();
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextAppState) => {
@@ -78,7 +78,7 @@ export default function FeedScreen() {
         />
       }
       ListFooterComponent={
-        loading && posts.length > 0 ? (
+        loadingMore ? (
           <ActivityIndicator
             style={styles.footer}
             color={theme.colors.brand.primary}
@@ -90,7 +90,7 @@ export default function FeedScreen() {
       onEndReachedThreshold={0.4}
       refreshControl={
         <RefreshControl
-          refreshing={loading && posts.length > 0}
+          refreshing={refreshing}
           onRefresh={refresh}
           tintColor={theme.colors.brand.primary}
           colors={[theme.colors.brand.primary]}
