@@ -1,0 +1,43 @@
+# Promtool test fixture for alert rules
+# Verifies that low-space and storage growth observations trigger expected
+# alerts with environment and volume details.
+
+rule_files:
+  - alert-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      # Staging database volume: 100 GB total, drops down to 13 GB (13% available < 15%)
+      - series: 'storage_volume_capacity_bytes{env="staging", volume="postgres_data", mount="/var/lib/postgresql/data"}'
+        values: '100000000000+0x20'
+      - series: 'storage_volume_available_bytes{env="staging", volume="postgres_data", mount="/var/lib/postgresql/data"}'
+        values: '20000000000-1000000000x20' # at 12m: 8000000000 (8%) < 15%
+      # Staging cache volume: 20 GB total, drops down to 800 MB (4% available < 15%)
+      - series: 'storage_volume_capacity_bytes{env="staging", volume="redis_data", mount="/data"}'
+        values: '20000000000+0x20'
+      - series: 'storage_volume_available_bytes{env="staging", volume="redis_data", mount="/data"}'
+        values: '2000000000-100000000x20' # at 12m: 800000000 (4%) < 15%
+
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PersistentVolumeLowSpace
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              env: staging
+              volume: postgres_data
+              mount: /var/lib/postgresql/data
+            exp_annotations:
+              summary: "Low storage space on volume postgres_data in staging"
+              description: "Persistent volume postgres_data (environment: staging, mount: /var/lib/postgresql/data) has 8.0% available capacity remaining."
+          - exp_labels:
+              severity: warning
+              env: staging
+              volume: redis_data
+              mount: /data
+            exp_annotations:
+              summary: "Low storage space on volume redis_data in staging"
+              description: "Persistent volume redis_data (environment: staging, mount: /data) has 4.0% available capacity remaining."

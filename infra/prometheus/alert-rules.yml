@@ -102,3 +102,64 @@ groups:
         annotations:
           summary: "Linkora analytics oracle is down"
           description: "The analytics oracle on {{ $labels.instance }} has been unreachable for more than 2 minutes."
+
+  # ── Persistent Volumes (Storage Monitoring) ──────────────────────────────
+  - name: persistent_volumes
+    interval: 60s
+    rules:
+      # Fire when available space on a persistent volume falls below 15%.
+      - alert: PersistentVolumeLowSpace
+        expr: |
+          (
+            storage_volume_available_bytes
+            /
+            clamp_min(storage_volume_capacity_bytes, 1)
+          ) < 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low storage space on volume {{ $labels.volume }} in {{ $labels.env }}"
+          description: >
+            Persistent volume {{ $labels.volume }} (environment: {{ $labels.env }},
+            mount: {{ $labels.mount }}) has {{ printf "%.1f" (mul $value 100) }}%
+            available capacity remaining.
+          runbook: "https://github.com/ijayabby/Linkora-social/blob/main/docs/deployment.md#storage-capacity-planning"
+
+      # Fire when available space on a persistent volume is critically low (< 5%).
+      - alert: PersistentVolumeCriticalSpace
+        expr: |
+          (
+            storage_volume_available_bytes
+            /
+            clamp_min(storage_volume_capacity_bytes, 1)
+          ) < 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical storage space exhaustion on volume {{ $labels.volume }} in {{ $labels.env }}"
+          description: >
+            Persistent volume {{ $labels.volume }} (environment: {{ $labels.env }},
+            mount: {{ $labels.mount }}) has less than 5% capacity remaining
+            ({{ printf "%.1f" (mul $value 100) }}% remaining). Immediate expansion or cleanup required.
+          runbook: "https://github.com/ijayabby/Linkora-social/blob/main/docs/deployment.md#storage-capacity-planning"
+
+      # Fire when persistent volume storage growth indicates volume exhaustion within 24 hours.
+      - alert: PersistentVolumeRapidGrowth
+        expr: |
+          predict_linear(storage_volume_available_bytes[4h], 86400) < 0
+          and on(volume, env) (
+            storage_volume_available_bytes
+            /
+            clamp_min(storage_volume_capacity_bytes, 1)
+          ) < 0.30
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rapid persistent volume growth on {{ $labels.volume }} in {{ $labels.env }}"
+          description: >
+            Storage on persistent volume {{ $labels.volume }} in {{ $labels.env }} is
+            growing at a rate projected to exhaust available capacity within 24 hours.
+          runbook: "https://github.com/ijayabby/Linkora-social/blob/main/docs/deployment.md#storage-capacity-planning"
