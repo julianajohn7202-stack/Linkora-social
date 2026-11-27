@@ -1,10 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 
 export interface SearchSuggestion {
-  type: "profile" | "hashtag" | "recent";
+  type: "profile" | "hashtag" | "recent" | "post";
   value: string;
   displayName?: string;
   avatar?: string;
+  subtitle?: string;
 }
 
 interface UseSearchSuggestionsOptions {
@@ -12,6 +13,7 @@ interface UseSearchSuggestionsOptions {
   minQueryLength?: number;
   maxSuggestions?: number;
   leadingEdge?: boolean;
+  includePosts?: boolean;
 }
 
 const INDEXER_API_URL = process.env.NEXT_PUBLIC_INDEXER_API_URL ?? "";
@@ -21,6 +23,7 @@ export function useSearchSuggestions({
   minQueryLength = 2,
   maxSuggestions = 5,
   leadingEdge = true,
+  includePosts = false,
 }: UseSearchSuggestionsOptions = {}) {
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -53,17 +56,20 @@ export function useSearchSuggestions({
       setLoading(true);
 
       try {
-        const profilesResponse = await fetch(
-          `${INDEXER_API_URL}/api/profiles/search?q=${encodeURIComponent(trimmed)}&limit=${maxSuggestions}`,
-          { signal: controller.signal }
-        );
-
-        if (!profilesResponse.ok) {
-          throw new Error("Failed to fetch suggestions");
-        }
-
-        const profilesData = await profilesResponse.json();
+        const params = `q=${encodeURIComponent(trimmed)}&limit=${maxSuggestions}`;
+        const read = async (path: string) => {
+          const response = await fetch(`${INDEXER_API_URL}${path}?${params}`, {
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error("Failed to fetch suggestions");
+          return response.json();
+        };
+        const [profilesData, postsData] = await Promise.all([
+          read("/api/profiles/search"),
+          includePosts ? read("/api/search").catch(() => []) : [],
+        ]);
         const profiles = Array.isArray(profilesData) ? profilesData : profilesData.profiles || [];
+        const posts = Array.isArray(postsData) ? postsData : postsData.posts || [];
 
         const newSuggestions: SearchSuggestion[] = [
           ...profiles
@@ -73,8 +79,19 @@ export function useSearchSuggestions({
               value: profile.address,
               displayName: profile.display_name || profile.username || profile.address,
               avatar: undefined,
+              ...(includePosts ? { subtitle: profile.username } : {}),
             })),
         ];
+
+        newSuggestions.push(
+          ...posts
+            .slice(0, maxSuggestions)
+            .map((post: { id: string | number; content: string }) => ({
+              type: "post" as const,
+              value: String(post.id),
+              displayName: post.content,
+            }))
+        );
 
         // Add hashtag suggestion if query starts with #
         if (trimmed.startsWith("#")) {
@@ -86,32 +103,23 @@ export function useSearchSuggestions({
         }
 
         // Only update if this request matches the absolute latest query and controller
-        if (
-          abortControllerRef.current === controller &&
-          latestQueryRef.current === trimmed
-        ) {
+        if (abortControllerRef.current === controller && latestQueryRef.current === trimmed) {
           setSuggestions(newSuggestions);
         }
       } catch (error: unknown) {
         if (error instanceof Error && error.name !== "AbortError") {
           console.error("Failed to fetch suggestions:", error);
-          if (
-            abortControllerRef.current === controller &&
-            latestQueryRef.current === trimmed
-          ) {
+          if (abortControllerRef.current === controller && latestQueryRef.current === trimmed) {
             setSuggestions([]);
           }
         }
       } finally {
-        if (
-          abortControllerRef.current === controller &&
-          latestQueryRef.current === trimmed
-        ) {
+        if (abortControllerRef.current === controller && latestQueryRef.current === trimmed) {
           setLoading(false);
         }
       }
     },
-    [minQueryLength, maxSuggestions]
+    [minQueryLength, maxSuggestions, includePosts]
   );
 
   const debouncedFetch = useCallback(
@@ -137,9 +145,7 @@ export function useSearchSuggestions({
 
       // Leading edge debounce: fire immediately on first keystroke, then throttle subsequent bursts
       const shouldFireLeading =
-        leadingEdge &&
-        !debounceTimerRef.current &&
-        lastExecutedQueryRef.current !== trimmed;
+        leadingEdge && !debounceTimerRef.current && lastExecutedQueryRef.current !== trimmed;
 
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);

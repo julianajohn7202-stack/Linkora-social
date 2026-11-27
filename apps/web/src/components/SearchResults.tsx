@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
+import type { SearchSuggestion } from "@/hooks/useSearchSuggestions";
+import { highlightSearchMatch } from "@/lib/highlightSearchMatch";
 import Link from "next/link";
 import { Post, PostCard, PostCardSkeleton } from "./PostCard";
 import { Profile, ProfileCard } from "./ProfileCard";
@@ -52,10 +55,10 @@ export function SearchResults({
   if (tab === "posts") {
     return (
       <div className="space-y-4" aria-live="polite" aria-label="Post search results">
-        {loading &&
-          Array.from({ length: 5 }, (_, i) => <PostCardSkeleton key={i} />)}
+        {loading && Array.from({ length: 5 }, (_, i) => <PostCardSkeleton key={i} />)}
 
-        {!loading && hasPostResults &&
+        {!loading &&
+          hasPostResults &&
           posts.map((post) => (
             <div key={post.id}>
               <PostCard post={post} query={query} />
@@ -65,32 +68,27 @@ export function SearchResults({
             </div>
           ))}
 
-        {!loading && !hasPostResults && (
-          <EmptyState query={query} kind="posts" />
-        )}
+        {!loading && !hasPostResults && <EmptyState query={query} kind="posts" />}
       </div>
     );
   }
 
   return (
     <div className="space-y-4" aria-live="polite" aria-label="Profile search results">
-      {loading && (
-        <ProfileListSkeleton />
-      )}
+      {loading && <ProfileListSkeleton />}
 
-        {!loading && hasProfileResults &&
+      {!loading &&
+        hasProfileResults &&
         profiles.map((profile) => (
           <div key={profile.address}>
-            <ProfileCard profile={profile} />
+            <ProfileCard profile={profile} query={query} />
             <Link href={`/profile/${profile.address}`} className="sr-only">
               View profile {profile.username ?? profile.address}
             </Link>
           </div>
         ))}
 
-      {!loading && !hasProfileResults && (
-        <EmptyState query={query} kind="profiles" />
-      )}
+      {!loading && !hasProfileResults && <EmptyState query={query} kind="profiles" />}
     </div>
   );
 }
@@ -130,21 +128,66 @@ function ProfileListSkeleton() {
   );
 }
 
-export interface SearchDropdownResult {
-  type: "profile" | "post";
-  value: string;
-  displayName: string;
-}
+const groupLabels = {
+  profile: "Profiles",
+  post: "Posts",
+  hashtag: "Hashtags",
+  recent: "Recent searches",
+} as const;
 
-export function HighlightedSearchMatch({ text, query }: { text: string; query: string }) {
-  const match = query.trim();
-  if (!match) return text;
-  const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.split(new RegExp(`(${escaped})`, "gi")).map((part, index) =>
-    index % 2 === 0 ? part : (
-      <mark key={index} className="bg-violet-500/30 text-[var(--foreground)] font-semibold">
-        {part}
-      </mark>
-    )
-  );
+export function SearchResultOptions({
+  id,
+  query,
+  results,
+  selectedIndex,
+  onSelect,
+}: {
+  id: string;
+  query: string;
+  results: SearchSuggestion[];
+  selectedIndex: number;
+  onSelect: (result: SearchSuggestion) => void;
+}) {
+  useEffect(() => {
+    if (selectedIndex >= 0) {
+      document.getElementById(`${id}-${selectedIndex}`)?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [id, selectedIndex]);
+
+  return Object.entries(groupLabels).map(([type, label]) => {
+    const entries = results
+      .map((result, index) => ({ result, index }))
+      .filter(({ result }) => result.type === type);
+    if (!entries.length) return null;
+    return (
+      <div key={type} role="group" aria-label={label}>
+        <div
+          aria-hidden="true"
+          className="px-4 pt-2 text-xs font-semibold text-[var(--text-muted)]"
+        >
+          {label}
+        </div>
+        {entries.map(({ result, index }) => (
+          <div
+            key={result.value}
+            id={`${id}-${index}`}
+            role="option"
+            aria-selected={selectedIndex === index}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onSelect(result)}
+            className="cursor-pointer px-4 py-2 hover:bg-[var(--muted)] aria-selected:bg-[var(--muted)]"
+          >
+            <div className="truncate">
+              {highlightSearchMatch(result.displayName || result.value, query)}
+            </div>
+            {result.subtitle && result.subtitle !== result.displayName && (
+              <div className="truncate text-xs text-[var(--text-muted)]">
+                {highlightSearchMatch(result.subtitle, query)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  });
 }
