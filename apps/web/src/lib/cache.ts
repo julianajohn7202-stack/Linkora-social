@@ -7,7 +7,7 @@ export class MemoryCache<T> {
 
   constructor(
     private readonly maxEntries = 500,
-    private readonly defaultTtlMs = 60_000
+    private readonly defaultTtlMs = 30_000
   ) {
     if (!Number.isInteger(maxEntries) || maxEntries < 1) {
       throw new RangeError("maxEntries must be a positive integer");
