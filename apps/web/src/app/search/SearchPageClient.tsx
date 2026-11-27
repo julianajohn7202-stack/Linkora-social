@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   Post,
   PostCard,
@@ -59,7 +59,6 @@ function readProfiles(data: unknown): Profile[] {
 }
 
 export function SearchPageClient() {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
   const query = searchParams.get("q") ?? "";
@@ -73,23 +72,36 @@ export function SearchPageClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [historyRevision, setHistoryRevision] = useState(0);
+
+  useEffect(() => {
+    const restoreSearch = () => setHistoryRevision((revision) => revision + 1);
+    window.addEventListener("popstate", restoreSearch);
+    return () => window.removeEventListener("popstate", restoreSearch);
+  }, []);
+
   const updateParams = (updates: Record<string, string>) => {
-    const next = new URLSearchParams(searchParams.toString());
+    const next = new URLSearchParams(window.location.search);
 
     Object.entries(updates).forEach(([key, value]) => {
       if (value) next.set(key, value);
       else next.delete(key);
     });
 
-    router.replace(`/search?${next.toString()}`, { scroll: false });
+    if (next.toString() === new URLSearchParams(window.location.search).toString()) return;
+    const url = `/search?${next.toString()}`;
+    if ("tab" in updates) window.history.pushState(null, "", url);
+    else window.history.replaceState(null, "", url);
   };
 
   const submitSearch = (nextQuery: string) => {
-    const next = new URLSearchParams(searchParams.toString());
+    const next = new URLSearchParams(window.location.search);
     next.set("q", nextQuery);
     next.delete("from");
     next.delete("to");
-    router.push(`/search?${next.toString()}`);
+    if (next.toString() !== new URLSearchParams(window.location.search).toString()) {
+      window.history.pushState(null, "", `/search?${next.toString()}`);
+    }
   };
 
   useEffect(() => {
@@ -105,6 +117,8 @@ export function SearchPageClient() {
     const controller = new AbortController();
     const path = activeTab === "profiles" ? "/api/profiles/search" : "/api/search";
 
+    setPosts([]);
+    setProfiles([]);
     setLoading(true);
     setError(null);
 
@@ -116,6 +130,7 @@ export function SearchPageClient() {
         return response.json();
       })
       .then((data) => {
+        if (controller.signal.aborted) return;
         if (activeTab === "profiles") {
           setProfiles(readProfiles(data));
         } else {
@@ -123,7 +138,7 @@ export function SearchPageClient() {
         }
       })
       .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : "Search request failed.");
         if (activeTab === "profiles") setProfiles([]);
         else setPosts([]);
@@ -168,6 +183,7 @@ export function SearchPageClient() {
       <div className="mb-8">
         <h1 className="mb-4 text-3xl font-bold text-foreground">Search</h1>
         <SearchBar
+          key={JSON.stringify([query, activeTab, historyRevision])}
           onSearch={submitSearch}
           initialValue={query}
           placeholder="Search posts and profiles"
