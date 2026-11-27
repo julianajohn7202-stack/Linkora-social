@@ -32,7 +32,7 @@ export function truncateAddress(addr: string, head = 6, tail = 4): string {
 
 export function formatTokenAmount(raw: bigint, decimals: number): string {
   if (decimals === 0) return raw.toString();
-  const divisor = BigInt(10 ** decimals);
+  const divisor = BigInt(10) ** BigInt(decimals);
   const whole = raw / divisor;
   const frac = raw % divisor;
   const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
@@ -41,8 +41,9 @@ export function formatTokenAmount(raw: bigint, decimals: number): string {
 
 export function parseTokenAmount(value: string, decimals: number): bigint {
   const [whole, frac = ""] = value.split(".");
-  const fracPadded = frac.slice(0, decimals).padEnd(decimals, "0");
-  return BigInt(whole || "0") * BigInt(10 ** decimals) + BigInt(fracPadded || "0");
+  if (frac.length > decimals) throw new Error(`Enter no more than ${decimals} decimal places`);
+  const fracPadded = frac.padEnd(decimals, "0");
+  return BigInt(whole || "0") * (BigInt(10) ** BigInt(decimals)) + BigInt(fracPadded || "0");
 }
 
 // ── Mock contract client ──────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ async function contractGetAllPools(): Promise<PoolData[]> {
   return results.filter(Boolean) as PoolData[];
 }
 
-async function contractGetTokenMeta(tokenAddress: string): Promise<TokenMeta> {
+async function contractGetTokenMeta(tokenAddress: string): Promise<TokenMeta | null> {
   // TODO: replace with SEP-41 token.symbol() / token.decimals() calls
   await new Promise((r) => setTimeout(r, 200));
   const mocks: Record<string, TokenMeta> = {
@@ -116,7 +117,7 @@ async function contractGetTokenMeta(tokenAddress: string): Promise<TokenMeta> {
       name: "Stellar Lumens",
     },
   };
-  return mocks[tokenAddress] ?? { symbol: "TOKEN", decimals: 7, name: "Unknown Token" };
+  return mocks[tokenAddress] ?? null;
 }
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -181,16 +182,26 @@ export function usePool(poolId: string | null) {
 }
 
 export function useTokenMeta(tokenAddress: string | null) {
-  const [meta, setMeta] = useState<TokenMeta | null>(null);
+  const [metadata, setMetadata] = useState<{ address: string; meta: TokenMeta | null } | null>(
+    null
+  );
 
   useEffect(() => {
     if (!tokenAddress) return;
+    let canceled = false;
     contractGetTokenMeta(tokenAddress)
-      .then(setMeta)
-      .catch(() => {});
+      .then((meta) => {
+        if (!canceled) setMetadata({ address: tokenAddress, meta });
+      })
+      .catch(() => {
+        if (!canceled) setMetadata({ address: tokenAddress, meta: null });
+      });
+    return () => {
+      canceled = true;
+    };
   }, [tokenAddress]);
 
-  return meta;
+  return metadata?.address === tokenAddress ? metadata?.meta ?? null : null;
 }
 
 export { contractGetPool, contractGetAllPools, contractGetTokenMeta };

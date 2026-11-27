@@ -25,17 +25,21 @@ export function DepositTab({
   onSuccess,
 }: DepositTabProps) {
   const [amount, setAmount] = useState("");
-  const [amountError, setAmountError] = useState<string | null>(null);
   const { status, result, error, deposit, reset } = useDeposit();
 
-  const decimals = tokenMeta?.decimals ?? 7;
+  const decimals = tokenMeta?.decimals;
+  const hasPrecision = decimals !== undefined && Number.isInteger(decimals) && decimals >= 0;
   const symbol = tokenMeta?.symbol ?? "TOKEN";
   const isSubmitting = status !== "idle" && status !== "error" && status !== "success";
 
   const validateAmount = useCallback(
     (val: string): string | null => {
+      if (!hasPrecision) return "Token precision is unavailable. Try again once token details load.";
       if (!val || val === "0" || val === "0.") return "Enter an amount";
       if (!AMOUNT_RE.test(val)) return "Invalid number";
+      if ((val.split(".")[1]?.length ?? 0) > decimals) {
+        return `Enter no more than ${decimals} decimal places`;
+      }
       try {
         const parsed = parseTokenAmount(val, decimals);
         if (parsed <= BigInt(0)) return "Amount must be greater than 0";
@@ -44,34 +48,28 @@ export function DepositTab({
       }
       return null;
     },
-    [decimals]
+    [decimals, hasPrecision]
   );
+  const amountError = amount || !hasPrecision ? validateAmount(amount) : null;
 
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     if (!AMOUNT_RE.test(val) && val !== "") return;
     setAmount(val);
-    if (amountError) setAmountError(validateAmount(val));
   };
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      const err = validateAmount(amount);
-      if (err) {
-        setAmountError(err);
-        return;
-      }
-      setAmountError(null);
+      if (isSubmitting || !hasPrecision || validateAmount(amount)) return;
       await deposit(currentUser, pool.pool_id, pool.token, amount, decimals, contractAddress);
     },
-    [amount, validateAmount, deposit, currentUser, pool, decimals, contractAddress]
+    [amount, validateAmount, deposit, currentUser, pool, decimals, contractAddress, hasPrecision, isSubmitting]
   );
 
   const handleReset = () => {
     reset();
     setAmount("");
-    setAmountError(null);
   };
 
   const handleSuccessDismiss = () => {
@@ -79,18 +77,9 @@ export function DepositTab({
     onSuccess();
   };
 
-  // Compute preview
-  const previewAmount =
-    amount && !amountError
-      ? (() => {
-          try {
-            const raw = parseTokenAmount(amount, decimals);
-            return formatTokenAmount(raw, decimals);
-          } catch {
-            return null;
-          }
-        })()
-      : null;
+  const previewAmount = hasPrecision && amount && !amountError
+    ? formatTokenAmount(parseTokenAmount(amount, decimals), decimals)
+    : null;
 
   return (
     <div style={styles.wrapper}>
@@ -118,7 +107,7 @@ export function DepositTab({
           <div style={styles.infoRow}>
             <span style={styles.infoLabel}>Pool balance</span>
             <span style={styles.infoValue}>
-              {formatTokenAmount(pool.balance, decimals)} {symbol}
+              {hasPrecision ? `${formatTokenAmount(pool.balance, decimals)} ${symbol}` : "Unavailable"}
             </span>
           </div>
 
@@ -137,7 +126,7 @@ export function DepositTab({
                 inputMode="decimal"
                 value={amount}
                 onChange={handleAmountChange}
-                placeholder={`0.${"0".repeat(Math.min(decimals, 2))}`}
+                placeholder={hasPrecision && decimals > 0 ? `0.${"0".repeat(Math.min(decimals, 2))}` : "0"}
                 disabled={isSubmitting}
                 style={{
                   ...styles.input,
@@ -157,7 +146,7 @@ export function DepositTab({
           </div>
 
           {/* Transaction preview */}
-          {previewAmount && (
+          {previewAmount && hasPrecision && (
             <div style={styles.preview} aria-label="Transaction preview">
               <p style={styles.previewTitle}>Transaction Preview</p>
               <div style={styles.previewRow}>
