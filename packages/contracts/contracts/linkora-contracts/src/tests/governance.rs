@@ -1,5 +1,5 @@
 use super::super::test::*;
-use crate::GovParameter;
+use crate::{GovParameter, GovStatus};
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
 #[test]
@@ -250,5 +250,162 @@ fn test_gov_finalize_on_first_finalizable_ledger_succeeds() {
         client.gov_get_proposal(&proposal_id).status,
         GovStatus::Passed,
         "proposal status persisted in storage must be GovStatus::Passed after finalization"
+    );
+}
+
+// ── Issue #622: Typed status fixtures for governance proposal lifecycles ───────
+
+/// A freshly created proposal must carry status Active.
+#[test]
+fn test_proposal_status_active_on_creation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _) = setup_governance(&env);
+
+    let proposer = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.set_profile(&proposer, &String::from_str(&env, "prop_622a"), &token);
+
+    let proposal_id = client.gov_propose(&proposer, &GovParameter::FeeBps, &300, &None);
+    let proposal = client.gov_get_proposal(&proposal_id);
+
+    assert_eq!(
+        proposal.status,
+        GovStatus::Active,
+        "proposal status must be Active immediately after creation"
+    );
+}
+
+/// A proposal that receives insufficient approval (below quorum floor) finalizes
+/// as Failed.
+#[test]
+fn test_proposal_status_failed_below_quorum() {
+    let env = Env::default();
+    env.mock_all_auths();
+    // quorum=60, time_lock=100, vote_window=200, decay=50, floor=30
+    let (client, _admin, _) = setup_governance(&env);
+
+    let proposer = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.set_profile(&proposer, &String::from_str(&env, "prop_622b"), &token);
+
+    let proposal_id = client.gov_propose(&proposer, &GovParameter::FeeBps, &300, &None);
+
+    // 1 for, 4 against = 20 % approval — below the 30 % floor
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    let v3 = Address::generate(&env);
+    let v4 = Address::generate(&env);
+    let v5 = Address::generate(&env);
+    client.gov_vote(&v1, &proposal_id, &true);
+    client.gov_vote(&v2, &proposal_id, &false);
+    client.gov_vote(&v3, &proposal_id, &false);
+    client.gov_vote(&v4, &proposal_id, &false);
+    client.gov_vote(&v5, &proposal_id, &false);
+
+    // Advance past vote window so finalization is permitted
+    env.ledger()
+        .with_mut(|l| l.sequence_number += 201);
+
+    let final_status = client.gov_finalize(&proposal_id);
+    assert_eq!(
+        final_status,
+        GovStatus::Failed,
+        "proposal must finalize as Failed when approval is below quorum"
+    );
+
+    let proposal = client.gov_get_proposal(&proposal_id);
+    assert_eq!(proposal.status, GovStatus::Failed);
+}
+
+/// A proposal that meets quorum and survives the time-lock executes and reaches
+/// status Executed.
+#[test]
+fn test_proposal_status_executed_after_passage() {
+    let env = Env::default();
+    env.mock_all_auths();
+    // quorum=60, time_lock=100, vote_window=200, decay=50, floor=30
+    let (client, admin, _) = setup_governance(&env);
+
+    let proposer = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.set_profile(&proposer, &String::from_str(&env, "prop_622c"), &token);
+
+    let proposal_id = client.gov_propose(&proposer, &GovParameter::FeeBps, &400, &None);
+
+    // 3 for, 1 against = 75 % approval — meets quorum
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    let v3 = Address::generate(&env);
+    let v4 = Address::generate(&env);
+    client.gov_vote(&v1, &proposal_id, &true);
+    client.gov_vote(&v2, &proposal_id, &true);
+    client.gov_vote(&v3, &proposal_id, &true);
+    client.gov_vote(&v4, &proposal_id, &false);
+
+    // Advance past vote_window (200) + time_lock (100)
+    env.ledger()
+        .with_mut(|l| l.sequence_number += 301);
+
+    client.gov_execute(&admin, &proposal_id);
+
+    let proposal = client.gov_get_proposal(&proposal_id);
+    assert_eq!(
+        proposal.status,
+        GovStatus::Executed,
+        "proposal status must be Executed after successful execution"
+    );
+    // The parameter change must have taken effect
+    assert_eq!(client.get_fee_bps(), 400);
+}
+
+/// A proposal that is vetoed during the time-lock window reaches status Vetoed
+/// and cannot be executed afterward.
+#[test]
+fn test_proposal_status_vetoed_prevents_execution() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _treasury) = setup_governance(&env);
+
+    // Set up a pool with two admins for vetoing
+    let pool_admin1 = Address::generate(&env);
+    let pool_admin2 = Address::generate(&env);
+    let pool_token = Address::generate(&env);
+    let pool_id = soroban_sdk::symbol_short!("vetopool");
+    let pool_admins = soroban_sdk::vec![&env, pool_admin1.clone(), pool_admin2.clone()];
+    client.create_pool(&admin, &pool_id, &pool_token, &pool_admins, &2);
+
+    let proposer = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.set_profile(&proposer, &String::from_str(&env, "prop_622d"), &token);
+
+    let proposal_id = client.gov_propose(&proposer, &GovParameter::FeeBps, &500, &None);
+
+    // Cast votes so the proposal would otherwise pass
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    client.gov_vote(&v1, &proposal_id, &true);
+    client.gov_vote(&v2, &proposal_id, &true);
+
+    // Advance into the time-lock window (past vote_window=200, before time_lock expires at 300)
+    env.ledger()
+        .with_mut(|l| l.sequence_number += 250);
+
+    client.gov_veto(&pool_admins, &pool_id, &proposal_id);
+
+    let proposal = client.gov_get_proposal(&proposal_id);
+    assert_eq!(
+        proposal.status,
+        GovStatus::Vetoed,
+        "proposal status must be Vetoed after a successful veto"
+    );
+
+    // Execution after a veto must be rejected
+    env.ledger()
+        .with_mut(|l| l.sequence_number += 100);
+    let exec_result = client.try_gov_execute(&admin, &proposal_id);
+    assert!(
+        exec_result.is_err(),
+        "executing a vetoed proposal must return an error"
     );
 }
