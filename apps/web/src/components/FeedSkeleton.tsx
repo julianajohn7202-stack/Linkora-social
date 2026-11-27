@@ -58,6 +58,9 @@ import { PostCardSkeleton } from "@/components/PostCardSkeleton";
  * }
  * ```
  *
+ * Reduced motion is handled inside PostCardSkeleton — no animation runs
+ * when the user has `prefers-reduced-motion: reduce` set.
+ *
  * @param count - Number of skeleton cards to render. Should equal the
  *   `limit` parameter used in the feed query to avoid CLS. Defaults to `3`.
  */
