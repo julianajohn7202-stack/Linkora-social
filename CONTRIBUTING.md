@@ -14,8 +14,9 @@ merged.
 4. [Commit Guidelines](#commit-guidelines)
 5. [Pull Request Process](#pull-request-process)
 6. [Branch Protection Rules](#branch-protection-rules)
-7. [Code Style](#code-style)
-8. [Testing](#testing)
+7. [Environment Configuration](#environment-configuration)
+8. [Code Style](#code-style)
+9. [Testing](#testing)
 
 ---
 
@@ -176,6 +177,77 @@ gh api repos/julianajohn7202-stack/Linkora-social/branches/main/protection \
   --field allow_force_pushes=false \
   --field allow_deletions=false
 ```
+
+---
+
+## Environment Configuration
+
+Local, staging, and release environments each draw configuration from different
+sources. Knowing the source of truth for each environment prevents secrets
+leaking into source control and avoids broken deployments caused by mismatched
+values.
+
+### Environment matrix
+
+| Environment              | Source of truth                                                                           | Responsible owner   | Notes                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------- |
+| **local**                | `.env` file (git-ignored) + `docker-compose.yml` defaults                                 | Developer           | Copy `.env.example`; never commit this file               |
+| **testnet / staging**    | GitHub Actions environment `staging` (secrets + variables) + `docker-compose.staging.yml` | DevOps / maintainer | Populated via repo **Settings → Environments → staging**  |
+| **release / production** | Kubernetes Secrets (`linkora-secrets`) + manifests in `infra/`                            | Maintainer          | Rotated through a secrets manager; never stored in source |
+
+### Variable precedence
+
+When a service starts, values are resolved in this order (first match wins):
+
+1. Shell environment variable (injected by CI, Docker Compose `environment:`, or Kubernetes Secret)
+2. `.env` file in the project root (local development only)
+3. `docker-compose.yml` default value in the `environment:` block
+4. Application hard-coded default (e.g. `PORT=3000`)
+
+A value set in GitHub Actions secrets always overrides a `.env` file because CI
+injects it directly into the shell environment.
+
+### Testnet and staging source of truth
+
+Testnet and staging variables are owned by the GitHub Actions environment named
+**`staging`** (repo **Settings → Environments → staging**). The
+`.github/workflows/deploy-staging.yml` workflow reads from this environment
+automatically on every push to `main` that touches a service directory.
+
+Required secrets and variables in the `staging` environment:
+
+| Name                 | Type     | Description                                     |
+| -------------------- | -------- | ----------------------------------------------- |
+| `STAGING_SSH_KEY`    | Secret   | Private SSH key for the staging host            |
+| `STAGING_HOST`       | Variable | Staging server hostname or IP                   |
+| `STAGING_USER`       | Variable | SSH login user (default `ubuntu`)               |
+| `STAGING_DEPLOY_DIR` | Variable | Project root path on the staging host           |
+| `STAGING_BASE_URL`   | Variable | Base URL shown as the environment URL in GitHub |
+
+`CONTRACT_ID` and `START_LEDGER` for testnet are also set as variables in the
+`staging` environment and must match the latest testnet contract deployment.
+Update them whenever a new contract is deployed to testnet.
+
+### Local setup examples
+
+Copy `.env.example` to `.env` and fill in the placeholder values. The file is
+listed in `.gitignore` — never commit it.
+
+```bash
+# .env — local development only, never commit this file
+POSTGRES_PASSWORD=your-local-db-password
+STELLAR_RPC_URL=https://soroban-testnet.stellar.org
+CONTRACT_ID=CABC...EXAMPLE          # Replace with your deployed testnet contract ID
+START_LEDGER=12345678               # Ledger sequence of the contract deployment
+ADMIN_SECRET=a-long-random-string   # Required only for oracle admin calls locally
+STELLAR_NETWORK=Testnet
+NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+CORS_ORIGIN=http://localhost:3000
+```
+
+Staging values are **not** placed in `.env`. They live exclusively in GitHub
+Actions environment secrets and variables so that they are never present on a
+developer's workstation or in source control.
 
 ---
 
