@@ -38,5 +38,8 @@ apps/mobile/.expo/
 apps/web/test-results/
 packages/sdk/docs/
 
+# Deployment manifests (generated at deploy time; tracked only via CI artifacts)
+deployment-manifests/
+
 app/apps/mobile/components/__snapshots__/
 app/apps/mobile/components/__tests__/

@@ -55,6 +55,7 @@ jobs:
           ssh-keyscan -H "$STAGING_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy to staging
+        id: deploy
         env:
           STAGING_HOST: ${{ vars.STAGING_HOST }}
           STAGING_USER: ${{ vars.STAGING_USER }}
@@ -62,7 +63,16 @@ jobs:
           STAGING_SERVICES: ${{ github.event.inputs.services || 'notification search media' }}
           COMPOSE_PROJECT: linkora-staging
           SKIP_BUILD: ${{ github.event.inputs.skip_build || 'false' }}
+          DEPLOY_ENV: staging
         run: bash scripts/deploy_staging.sh
+
+      - name: Upload deployment manifest
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-manifest-${{ github.sha }}
+          path: deployment-manifests/
+          retention-days: 90
 
       - name: Notify deployment status
         if: always()
