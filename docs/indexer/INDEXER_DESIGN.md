@@ -1,3 +1,5 @@
+For ledger progress and projection terminology, see the [data freshness glossary](./DATA_FRESHNESS.md).
+
 # Indexer gossip protocol
 
 Indexer nodes compare their latest ledger state roots with peers configured in
