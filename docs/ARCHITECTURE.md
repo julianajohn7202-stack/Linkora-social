@@ -9,6 +9,7 @@ This document describes the major components of the Linkora platform and how the
 1. [High-level overview](#1-high-level-overview)
 2. [Component breakdown](#2-component-breakdown)
 3. [DM encryption architecture](#3-dm-encryption-architecture)
+4. [Transaction lifecycle troubleshooting](#4-transaction-lifecycle-troubleshooting)
 
 ---
 
@@ -181,3 +182,38 @@ Forward secrecy is planned for a future protocol version using a Double Ratchet 
 | High-level `DmService` (key publish, send, receive)  | [`packages/sdk/src/dm/index.ts`](../packages/sdk/src/dm/index.ts)       |
 | Relay server: Stellar signature verification         | [`services/dm-relay/src/auth.ts`](../services/dm-relay/src/auth.ts)     |
 | Relay server: message routes                         | [`services/dm-relay/src/routes.ts`](../services/dm-relay/src/routes.ts) |
+
+---
+
+## 4. Transaction lifecycle troubleshooting
+
+| Stage               | Implementation                                                                                                                   | Symptoms and what to inspect                                                                                                                                                                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Signing             | The wallet signs the prepared XDR. The SDK queue accepts a signer, and the web transaction helper requests the wallet signature. | A dismissed prompt or explicit wallet rejection stops the attempt before submission. Check the wallet error and whether the client called the submission RPC.                                                                                                |
+| Submission          | The client sends signed XDR with `sendTransaction` and records the returned hash.                                                | `PENDING` indicates acceptance for processing. `ERROR` indicates submission rejection. Inspect the submission response and its `errorResultXdr` when present. A transport timeout leaves the outcome uncertain, so look up the hash before submitting again. |
+| Ledger confirmation | The client polls `getTransaction` using the hash.                                                                                | `SUCCESS` confirms execution and identifies the ledger. `FAILED` means execution failed on-chain. Inspect `resultXdr` and available diagnostic events for the cause.                                                                                         |
+| Indexing            | The indexer ingests contract events and commits the domain rows and stream cursor to PostgreSQL.                                 | A successful transaction can precede visibility in the feed or other indexed reads. Compare the confirmation ledger with the indexer's committed cursor for the contract and query the affected read endpoint again.                                         |
+
+### Inspect a known transaction hash
+
+Use the same Stellar network as the wallet and application. Set `RPC_URL` to that network's RPC endpoint and `TX_HASH` to the 64-character hexadecimal hash from the wallet or submission response.
+
+```bash
+curl -sS "$RPC_URL" \
+  -H 'Content-Type: application/json' \
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTransaction\",\"params\":{\"hash\":\"$TX_HASH\"}}" | jq
+```
+
+1. Read `result.status`. For `NOT_FOUND`, verify the network and hash, then poll again if submission was recent. For older transactions, check the RPC's retained ledger range or use an explorer on the same network.
+2. For `FAILED`, capture the hash, ledger and result or diagnostic details. Refreshing an indexed view cannot recover a failed operation.
+3. For `SUCCESS`, record `result.ledger` and identify the affected entity from the transaction result or events. For example, query `GET /api/posts/<postId>` on the app's indexer after a successful post creation.
+4. If the entity is missing and the indexer's `indexer_cursor.processed_cursor` for that contract is behind the confirmation ledger, allow ingestion to catch up and retry the read. If the cursor has reached or passed the ledger, check the contract ID, expected event, ingest logs and endpoint filters or caching. Preserve the original hash when investigating a confirmed write.
+
+### Code references
+
+| Concern                               | File                                                                                                                 |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Signing, submission and confirmation  | [SDK transaction queue](../packages/sdk/src/queue.ts), [web transaction helper](../apps/web/src/lib/tx.ts)           |
+| Event processing and committed cursor | [Indexer pipeline](../services/indexer/src/pipeline.ts)                                                              |
+| Post read endpoint                    | [Indexer post routes](../services/indexer/src/api/routes/posts.ts)                                                   |
+| RPC response fields                   | [Stellar RPC getTransaction](https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getTransaction) |
