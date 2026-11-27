@@ -9866,3 +9866,91 @@ fn test_verify_batch_post_cleanup_state_transitions_and_adjacent_posts() {
     assert_eq!(client.get_like_count(&post_after_id), 1);
 }
 
+// ── Treasury rotation test ────────────────────────────────────────────────────
+
+#[test]
+fn test_treasury_rotation_affects_tip_fee_routing() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LinkoraContract, ());
+    let client = LinkoraContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let original_treasury = Address::generate(&env);
+    let new_treasury = Address::generate(&env);
+    let author = Address::generate(&env);
+    let tipper = Address::generate(&env);
+
+    // Initialize with 5% fee (500 bps)
+    client.initialize(&admin, &original_treasury, &500);
+
+    // Setup token — setup_token mints 10,000 to &tipper (enough for two 1000-unit tips)
+    let token = setup_token(&env, &tipper);
+
+    // Setup author profile with the tip token as the creator token
+    client.set_profile(&author, &String::from_str(&env, "creator"), &token);
+
+    // Create two posts by the author
+    let post_id1 = client.create_post(&author, &String::from_str(&env, "first post"));
+    let post_id2 = client.create_post(&author, &String::from_str(&env, "second post"));
+
+    let token_client = TokenClient::new(&env, &token);
+
+    // ── Tip 1: before treasury rotation ──────────────────────────────
+    let tip_amount: i128 = 1000;
+    // fee = 1000 * 500 / 10_000 = 50; author_amount = 950
+    let fee: i128 = 50;
+    let author_amount: i128 = 950;
+
+    client.tip(&tipper, &post_id1, &token, &tip_amount);
+
+    assert_eq!(
+        token_client.balance(&original_treasury),
+        fee,
+        "first fee to original treasury"
+    );
+    assert_eq!(
+        token_client.balance(&new_treasury),
+        0,
+        "new treasury has nothing yet"
+    );
+    assert_eq!(
+        token_client.balance(&author),
+        author_amount,
+        "author gets first share"
+    );
+
+    // ── Rotate treasury ───────────────────────────────────────────────
+    client.set_treasury(&admin, &new_treasury);
+    assert_eq!(client.get_treasury(), Some(new_treasury.clone()));
+
+    // ── Tip 2: after treasury rotation (different post, so no cooldown) ──
+    client.tip(&tipper, &post_id2, &token, &tip_amount);
+
+    assert_eq!(
+        token_client.balance(&original_treasury),
+        fee,
+        "original treasury unchanged after rotation"
+    );
+    assert_eq!(
+        token_client.balance(&new_treasury),
+        fee,
+        "second fee to new treasury"
+    );
+    assert_eq!(
+        token_client.balance(&author),
+        author_amount * 2,
+        "author accumulated both shares"
+    );
+
+    // ── Verify tip events were emitted ───────────────────────────────
+    let events = env.events().all();
+    assert!(!events.events().is_empty(), "TipEvents must have been emitted");
+
+    // ── Verify post tip_total tracking ───────────────────────────────
+    let post1 = client.get_post(&post_id1).unwrap();
+    assert_eq!(post1.tip_total, author_amount);
+    let post2 = client.get_post(&post_id2).unwrap();
+    assert_eq!(post2.tip_total, author_amount);
+}
