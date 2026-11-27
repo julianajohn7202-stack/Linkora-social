@@ -129,3 +129,22 @@ function ProfileListSkeleton() {
     </div>
   );
 }
+
+export interface SearchDropdownResult {
+  type: "profile" | "post";
+  value: string;
+  displayName: string;
+}
+
+export function HighlightedSearchMatch({ text, query }: { text: string; query: string }) {
+  const match = query.trim();
+  if (!match) return text;
+  const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.split(new RegExp(`(${escaped})`, "gi")).map((part, index) =>
+    index % 2 === 0 ? part : (
+      <mark key={index} className="bg-violet-500/30 text-[var(--foreground)] font-semibold">
+        {part}
+      </mark>
+    )
+  );
+}
