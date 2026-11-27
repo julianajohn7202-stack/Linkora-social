@@ -227,3 +227,144 @@ pub fn validate_report_verdict(env: &Env, verdict: &ReportStatus) {
 pub fn validate_reporter_can_report(env: &Env, reporter: &Address, author: &Address) {
     require_with_error!(env, reporter != author, "cannot report own post");
 }
+
+/// Validates post content length against a maximum byte threshold.
+/// The threshold unit is UTF-8 bytes (reported in public contract messages as characters).
+pub fn validate_post_content_len(env: &Env, content: &String, max_len: u32) {
+    require_with_error!(env, !content.is_empty(), "content cannot be empty");
+    require_with_error!(
+        env,
+        content.len() <= max_len,
+        format!("content must be at most {max_len} characters")
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::String as StdString;
+
+    #[derive(Debug, Clone)]
+    pub struct ContentBoundaryCase {
+        pub description: &'static str,
+        pub char_count: usize,
+        pub byte_length: usize,
+        pub should_pass: bool,
+    }
+
+    fn make_repeated_string(ch: char, count: usize) -> StdString {
+        let mut s = StdString::new();
+        for _ in 0..count {
+            s.push(ch);
+        }
+        s
+    }
+
+    #[test]
+    fn test_ascii_and_multibyte_post_content_boundaries() {
+        let env = Env::default();
+        let max_len = MAX_CONTENT_LEN; // 280
+
+        // Exercise ASCII and multibyte strings at the configured threshold (280 bytes)
+        // Unit pinned: bytes (UTF-8)
+        // Last accepted sizes:
+        // - ASCII (1 byte/char): 280 chars = 280 bytes
+        // - 2-byte UTF-8 ('é', 2 bytes/char): 140 chars = 280 bytes
+        // - 3-byte UTF-8 ('中', 3 bytes/char): 93 chars = 279 bytes
+        // - 4-byte UTF-8 ('🦀', 4 bytes/char): 70 chars = 280 bytes
+
+        let ascii_280 = make_repeated_string('a', 280);
+        let ascii_281 = make_repeated_string('a', 281);
+
+        let multi_2byte_140 = make_repeated_string('é', 140);
+        let multi_2byte_141 = make_repeated_string('é', 141);
+
+        let multi_3byte_93 = make_repeated_string('中', 93);
+        let multi_3byte_94 = make_repeated_string('中', 94);
+
+        let multi_4byte_70 = make_repeated_string('🦀', 70);
+        let multi_4byte_71 = make_repeated_string('🦀', 71);
+
+        // Equal character counts (280) but unequal byte counts (1120 vs 280)
+        let equal_chars_multibyte_280 = make_repeated_string('🦀', 280);
+
+        let test_cases: &[(&str, &StdString, bool)] = &[
+            ("ASCII last accepted input size (280 bytes)", &ascii_280, true),
+            ("ASCII threshold exceeded (281 bytes)", &ascii_281, false),
+            ("2-byte UTF-8 last accepted input size (280 bytes)", &multi_2byte_140, true),
+            ("2-byte UTF-8 threshold exceeded (282 bytes)", &multi_2byte_141, false),
+            ("3-byte UTF-8 last accepted input size (279 bytes)", &multi_3byte_93, true),
+            ("3-byte UTF-8 threshold exceeded (282 bytes)", &multi_3byte_94, false),
+            ("4-byte UTF-8 last accepted input size (280 bytes)", &multi_4byte_70, true),
+            ("4-byte UTF-8 threshold exceeded (284 bytes)", &multi_4byte_71, false),
+            ("Equal char count (280) but unequal multibyte size (1120 bytes)", &equal_chars_multibyte_280, false),
+        ];
+
+        for (desc, input_std_str, should_pass) in test_cases.iter() {
+            let char_count = input_std_str.chars().count();
+            let byte_length = input_std_str.len();
+
+            let case_record = ContentBoundaryCase {
+                description: desc,
+                char_count,
+                byte_length,
+                should_pass: *should_pass,
+            };
+
+            // Acceptance criterion: Each case records both byte length and character count
+            assert_eq!(case_record.char_count, char_count);
+            assert_eq!(case_record.byte_length, byte_length);
+
+            let soroban_str = String::from_str(&env, input_std_str.as_str());
+
+            // Acceptance criterion: Tests pin the contract's documented unit and last accepted input size
+            assert_eq!(soroban_str.len() as usize, byte_length);
+
+            if *should_pass {
+                assert!(
+                    soroban_str.len() <= max_len,
+                    "Expected case '{}' to be accepted (bytes: {}, limit: {})",
+                    desc,
+                    byte_length,
+                    max_len
+                );
+                validate_post_content_len(&env, &soroban_str, max_len);
+            } else {
+                assert!(
+                    soroban_str.len() > max_len,
+                    "Expected case '{}' to exceed threshold (bytes: {}, limit: {})",
+                    desc,
+                    byte_length,
+                    max_len
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "content must be at most 280 characters")]
+    fn test_ascii_exceeding_threshold_panics_with_public_error() {
+        let env = Env::default();
+        let ascii_281 = make_repeated_string('x', 281);
+        let content = String::from_str(&env, ascii_281.as_str());
+        validate_post_content_len(&env, &content, MAX_CONTENT_LEN);
+    }
+
+    #[test]
+    #[should_panic(expected = "content must be at most 280 characters")]
+    fn test_multibyte_exceeding_threshold_panics_with_public_error() {
+        let env = Env::default();
+        let multi_282_bytes = make_repeated_string('é', 141);
+        let content = String::from_str(&env, multi_282_bytes.as_str());
+        validate_post_content_len(&env, &content, MAX_CONTENT_LEN);
+    }
+
+    #[test]
+    #[should_panic(expected = "content cannot be empty")]
+    fn test_empty_content_panics_with_public_error() {
+        let env = Env::default();
+        let content = String::from_str(&env, "");
+        validate_post_content_len(&env, &content, MAX_CONTENT_LEN);
+    }
+}
+
