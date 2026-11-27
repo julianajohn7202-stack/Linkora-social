@@ -10,6 +10,7 @@ This document describes the major components of the Linkora platform and how the
 2. [Component breakdown](#2-component-breakdown)
 3. [DM encryption architecture](#3-dm-encryption-architecture)
 4. [Transaction lifecycle troubleshooting](#4-transaction-lifecycle-troubleshooting)
+5. [Web and mobile deep links](#5-web-and-mobile-deep-links)
 
 ---
 
@@ -219,3 +220,70 @@ curl -sS "$RPC_URL" \
 | Event processing and committed cursor | [Indexer pipeline](../services/indexer/src/pipeline.ts)                                                              |
 | Post read endpoint                    | [Indexer post routes](../services/indexer/src/api/routes/posts.ts)                                                   |
 | RPC response fields                   | [Stellar RPC getTransaction](https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getTransaction) |
+
+---
+
+## 5. Web and mobile deep links
+
+The web app uses HTTPS routes on its deployed origin. The mobile app
+registers the `linkora` scheme and handles both initial launch URLs and URL
+events received while the app is already running.
+
+### Route reference
+
+In the examples, replace `{address}` with a Stellar account public key such
+as `GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF`. Replace
+`42` with an ID that exists on the target deployment.
+
+| Target | Browser path | Native URL example | Native screen |
+| --- | --- | --- | --- |
+| Post | [`/posts/{id}`](../apps/web/src/app/posts/%5Bid%5D/page.tsx) | `linkora://post/42` | [`/post/42`](../apps/mobile/app/post/%5Bid%5D.tsx) |
+| Profile | [`/profile/{address}`](../apps/web/src/app/profile/%5Baddress%5D/page.tsx) | `linkora://profile/{address}` | [`/profile/{address}`](../apps/mobile/app/profile/%5Baddress%5D.tsx) |
+| Pool | [`/pools/{id}`](../apps/web/src/app/pools/%5Bid%5D/page.tsx) | `linkora://pool/42` | [`/pools/42`](../apps/mobile/app/pools/%5Bid%5D.tsx) |
+| Direct message | [`/dm/{address}`](../apps/web/src/app/dm/%5Baddress%5D/page.tsx) | `linkora://dm/{address}` | [`/dm/{address}`](../apps/mobile/app/dm/%5Baddress%5D.tsx) |
+
+The [mobile parser](../apps/mobile/utils/deepLinks.ts) also accepts URLs of
+the form `https://linkora.social/{resource}/{value}` and
+`https://www.linkora.social/{resource}/{value}`, with the same resource
+names as the native URL column. It decodes the path segments and ignores
+query strings and fragments. For posts and pools it accepts 1–128 ASCII
+letters, digits, underscores or hyphens. Use positive decimal post IDs in
+shared links so the value also works with the web post lookup. Profile and DM
+links require a `G` followed by 55 uppercase Base32 characters. This shape
+check leaves checksum and account existence to the receiving application.
+
+### Fallback and signed-out behavior
+
+- The [Expo config](../apps/mobile/app.json) declares `linkora.social` as an
+  iOS associated domain. It has no `www` association or Android HTTPS intent
+  filter. An HTTPS link opens in the browser when the OS does not deliver it
+  to the app. Use the browser paths above for browser links. For example,
+  `/posts/42` is a browser detail path and `/post/42` is the mobile
+  parser's HTTPS path. The browser has no matching detail page at `/post/42`
+  or `/pool/42`.
+- A device needs an installed handler to open `linkora://` links. For a web
+  fallback, provide the corresponding HTTPS browser link alongside it.
+- The [mobile root handler](../apps/mobile/app/_layout.tsx) ignores rejected
+  URLs. For example, `linkora://profile/alice` fails the key shape check and
+  `linkora://post/%2F` fails the ID check after decoding. The handler leaves
+  navigation to Expo Router when it rejects a URL. A regular launch at
+  [the app root](../apps/mobile/app/index.tsx) redirects to the feed.
+- An accepted ID can still reference a missing record. A missing post
+  shows **Post not found** in mobile or **Post Not Found** with an Explore
+  link on web. A browser post path like `/posts/abc` fails bigint conversion
+  and uses the [web error fallback](../apps/web/src/app/error.tsx).
+- A signed-out launch into a valid post or profile can load the detail
+  without a connected wallet. Wallet actions still require a connection.
+  A signed-out browser DM shows a Freighter connection prompt. The native
+  DM opens its screen, with relay setup and sending gated on the wallet.
+
+### Verification
+
+1. With a known post ID or profile key, open the browser path and the native
+   URL on their respective platforms with the wallet disconnected. For
+   mobile, try both a cold start and an already running app.
+2. Open the invalid identifier examples above and compare the parser and
+   browser fallback behavior. Try a valid numeric post ID that does not
+   exist to check the missing-post state separately.
+3. Open a profile HTTPS link with app association enabled and with the
+   association unavailable to check native delivery and browser fallback.
