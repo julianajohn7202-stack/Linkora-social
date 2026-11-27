@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 
 import { useWallet } from "../../hooks/useWallet";
@@ -30,6 +31,7 @@ const MAX_CHARS = 280;
 export default function CreatePostScreen() {
   const router = useRouter();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { address, connected } = useWallet();
   const { profile } = useProfile(address ?? "");
   const { showPending, showSuccess, showError, dismissToast } = useToast();
@@ -110,74 +112,82 @@ export default function CreatePostScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+    <SafeAreaView style={styles.flex} edges={["bottom"]}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
       >
-        {/* Composer */}
-        <View style={styles.composerCard}>
-          {/* Author hint */}
-          <Text style={styles.authorHint} numberOfLines={1} accessibilityLabel="Your address">
-            {`${address!.slice(0, 8)}…${address!.slice(-6)}`}
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Composer card — text input only; footer is outside the scroll */}
+          <View style={styles.composerCard}>
+            {/* Author hint */}
+            <Text style={styles.authorHint} numberOfLines={1} accessibilityLabel="Your address">
+              {`${address!.slice(0, 8)}…${address!.slice(-6)}`}
+            </Text>
+
+            {/* Text input */}
+            <TextInput
+              style={[styles.input, overLimit && styles.inputError]}
+              value={content}
+              onChangeText={setContent}
+              placeholder="What's on your mind?"
+              placeholderTextColor={theme.colors.text.secondary}
+              multiline
+              maxLength={MAX_CHARS + 20} // soft cap; hard limit via counter
+              editable={!submitting}
+              autoFocus
+              accessibilityLabel="Post content"
+              accessibilityHint={`Maximum ${MAX_CHARS} characters`}
+            />
+
+            {/* Over-limit error */}
+            {overLimit && (
+              <Text style={styles.errorMsg} accessibilityRole="alert">
+                {`Post is ${Math.abs(remaining)} character${Math.abs(remaining) === 1 ? "" : "s"} over the limit.`}
+              </Text>
+            )}
+          </View>
+        </ScrollView>
+
+        {/* Footer anchored above the keyboard and home indicator */}
+        <View
+          style={[
+            styles.footer,
+            { paddingBottom: Math.max(insets.bottom, 12) },
+          ]}
+        >
+          {/* Character counter */}
+          <Text
+            style={[styles.counter, { color: counterColor }]}
+            accessibilityLabel={`${remaining} characters remaining`}
+            accessibilityLiveRegion="polite"
+          >
+            {remaining}
           </Text>
 
-          {/* Text input */}
-          <TextInput
-            style={[styles.input, overLimit && styles.inputError]}
-            value={content}
-            onChangeText={setContent}
-            placeholder="What's on your mind?"
-            placeholderTextColor={theme.colors.text.secondary}
-            multiline
-            maxLength={MAX_CHARS + 20} // soft cap; hard limit via counter
-            editable={!submitting}
-            autoFocus
-            accessibilityLabel="Post content"
-            accessibilityHint={`Maximum ${MAX_CHARS} characters`}
-          />
-
-          {/* Footer: counter + submit */}
-          <View style={styles.footer}>
-            {/* Character counter */}
-            <Text
-              style={[styles.counter, { color: counterColor }]}
-              accessibilityLabel={`${remaining} characters remaining`}
-              accessibilityLiveRegion="polite"
-            >
-              {remaining}
-            </Text>
-
-            {/* Submit button */}
-            <TouchableOpacity
-              style={[styles.submitBtn, submitDisabled && styles.submitBtnDisabled]}
-              onPress={handleSubmit}
-              disabled={submitDisabled}
-              accessibilityRole="button"
-              accessibilityLabel="Publish post"
-              accessibilityState={{ disabled: submitDisabled, busy: submitting }}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#ffffff" size="small" />
-              ) : (
-                <Text style={styles.submitBtnText}>Post</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {/* Over-limit error */}
-          {overLimit && (
-            <Text style={styles.errorMsg} accessibilityRole="alert">
-              {`Post is ${Math.abs(remaining)} character${Math.abs(remaining) === 1 ? "" : "s"} over the limit.`}
-            </Text>
-          )}
+          {/* Submit button */}
+          <TouchableOpacity
+            style={[styles.submitBtn, submitDisabled && styles.submitBtnDisabled]}
+            onPress={handleSubmit}
+            disabled={submitDisabled}
+            accessibilityRole="button"
+            accessibilityLabel="Publish post"
+            accessibilityState={{ disabled: submitDisabled, busy: submitting }}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#ffffff" size="small" />
+            ) : (
+              <Text style={styles.submitBtnText}>Post</Text>
+            )}
+          </TouchableOpacity>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -227,7 +237,11 @@ function createStyles(theme: ReturnType<typeof useTheme>["theme"]) {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
-      marginTop: 12,
+      paddingHorizontal: 20,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.surface.border,
+      backgroundColor: theme.colors.surface.background,
     },
     counter: {
       fontSize: 14,
