@@ -98,6 +98,21 @@ function typeLabel(type: NotificationPayload["type"]): string {
   }
 }
 
+function isItemUnavailable(payload: NotificationPayload): boolean {
+  switch (payload.type) {
+    case "TIP_RECEIVED":
+    case "LIKE_RECEIVED":
+    case "POST_REPORTED":
+    case "REPORT_DISMISSED":
+    case "POST_REMOVED_BY_MODERATION":
+      return !payload.postId;
+    case "POOL_ACTIVITY":
+      return !payload.poolId;
+    default:
+      return false;
+  }
+}
+
 function formatTimestamp(iso: string): string {
   try {
     const d = new Date(iso);
@@ -213,8 +228,26 @@ export function NotificationDetailSheet({
               </TouchableOpacity>
             ) : null}
 
-            {/* Primary action button */}
-            {actionPath ? (
+            {/* Primary action button or unavailable state */}
+            {isItemUnavailable(notification.payload) ? (
+              <View style={styles.unavailableBox}>
+                <Text
+                  style={styles.unavailableText}
+                  testID="unavailable-message"
+                  accessibilityRole="text"
+                >
+                  {`The ${typeLabel(notification.payload.type).toLowerCase()} content is no longer available.`}
+                </Text>
+                <TouchableOpacity
+                  onPress={onDismiss}
+                  accessibilityRole="button"
+                  accessibilityLabel="Back to notifications"
+                  testID="back-to-notifications"
+                >
+                  <Text style={styles.linkText}>← Back to notifications</Text>
+                </TouchableOpacity>
+              </View>
+            ) : actionPath ? (
               <TouchableOpacity
                 style={[styles.actionButton, { backgroundColor: theme.colors.brand.primary }]}
                 onPress={() => {
@@ -307,6 +340,19 @@ function createStyles(theme: ReturnType<typeof useTheme>["theme"]) {
     dismissText: {
       fontSize: 14,
       fontWeight: "500",
+    },
+    unavailableBox: {
+      borderWidth: 1,
+      borderColor: theme.colors.surface.border,
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 12,
+    },
+    unavailableText: {
+      color: theme.colors.text.secondary,
+      fontSize: 14,
+      lineHeight: 20,
+      marginBottom: 12,
     },
   });
 }
