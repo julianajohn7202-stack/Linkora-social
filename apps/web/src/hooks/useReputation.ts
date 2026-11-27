@@ -1,7 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { scoreToTier, type ReputationTier } from "../../../../packages/reputation/src/scorer";
+import { MemoryCache } from "../lib/cache";
+
+const REPUTATION_TTL_MS = 5 * 60_000;
 const INDEXER_URL = process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:3001";
 
 export interface ReputationData {
@@ -17,6 +21,7 @@ export interface ReputationData {
 
 interface UseReputationResult {
   reputation: ReputationData | null;
+  tier: ReputationTier | null;
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
@@ -45,46 +50,62 @@ export function useReputation(address: string | null): UseReputationResult {
   const [isLoading, setIsLoading] = useState(Boolean(address));
   const [error, setError] = useState<string | null>(null);
 
-  const fetchReputation = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!address) {
-        setReputation(null);
-        setError(null);
-        setIsLoading(false);
-        return;
-      }
+  const cache = useRef(new MemoryCache<ReputationData | null>(100, REPUTATION_TTL_MS));
+  const pending = useRef<AbortController | null>(null);
 
-      setIsLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(
-          `${INDEXER_URL}/api/profiles/${encodeURIComponent(address)}/reputation`,
-          { signal }
-        );
+  const fetchReputation = useCallback(async (force = false) => {
+    pending.current?.abort();
+    setError(null);
+
+    const cached = address && !force ? cache.current.get(address) : undefined;
+    if (!address || cached !== undefined) {
+      setReputation(cached ?? null);
+      setIsLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    pending.current = controller;
+    setIsLoading(true);
+    try {
+      const response = await fetch(
+        `${INDEXER_URL}/api/profiles/${encodeURIComponent(address)}/reputation`,
+        { signal: controller.signal }
+      );
+      let next: ReputationData | null = null;
+      if (response.status !== 404 && response.status !== 204) {
         if (!response.ok) {
           throw new Error(`Unable to load reputation (${response.status})`);
         }
         const payload: unknown = await response.json();
-        if (!isReputationData(payload)) {
+        if (payload !== null && !isReputationData(payload)) {
           throw new Error("The reputation response has an invalid format");
         }
-        setReputation(payload);
-      } catch (cause) {
-        if (cause instanceof Error && cause.name === "AbortError") return;
-        setReputation(null);
-        setError(cause instanceof Error ? cause.message : "Unable to load reputation");
-      } finally {
-        if (!signal?.aborted) setIsLoading(false);
+        next = payload;
       }
-    },
-    [address]
-  );
+      if (controller.signal.aborted) return;
+      cache.current.set(address, next);
+      setReputation(next);
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      setReputation(null);
+      setError(cause instanceof Error ? cause.message : "Unable to load reputation");
+    } finally {
+      if (!controller.signal.aborted) setIsLoading(false);
+    }
+  }, [address]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void fetchReputation(controller.signal);
-    return () => controller.abort();
+    setReputation(null);
+    void fetchReputation();
+    return () => pending.current?.abort();
   }, [fetchReputation]);
 
-  return { reputation, isLoading, error, refetch: () => fetchReputation() };
+  return {
+    reputation,
+    tier: reputation === null ? null : scoreToTier(reputation.score),
+    isLoading,
+    error,
+    refetch: () => fetchReputation(true),
+  };
 }
