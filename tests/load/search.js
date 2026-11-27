@@ -5,7 +5,7 @@
  *
  * Scenario
  * --------
- * Simulates 100 concurrent users performing a 5-minute ramp over the Linkora
+ * Simulates 100 concurrent users replaying a fixed request mix over the Linkora
  * indexer search / query API (port 3000).  The test exercises the most common
  * read paths: profile lookup, post listing, follow-graph traversal, and pool
  * queries — all of which share the same PostgreSQL full-text search layer.
@@ -26,7 +26,8 @@
  */
 
 import http from "k6/http";
-import { check, sleep } from "k6";
+import { check, randomSeed, sleep } from "k6";
+import exec from "k6/execution";
 import { Trend, Rate } from "k6/metrics";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,8 @@ import { Trend, Rate } from "k6/metrics";
 // ---------------------------------------------------------------------------
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
+const FIXTURE_SEED = 283;
+const ITERATIONS_PER_VU = 500;
 const API = `${BASE_URL}/api`;
 
 /** Custom metrics */
@@ -47,15 +50,11 @@ const searchErrors = new Rate("search_errors");
 export const options = {
   scenarios: {
     search_load: {
-      executor: "ramping-vus",
-      startVUs: 0,
-      stages: [
-        // Ramp to 100 concurrent users over 5 minutes
-        { target: 100, duration: "5m" },
-        // Hold at 100 VUs for 0 s (test ends immediately after ramp)
-        { target: 100, duration: "0s" },
-      ],
-      gracefulRampDown: "10s",
+      executor: "per-vu-iterations",
+      vus: 100,
+      iterations: ITERATIONS_PER_VU,
+      maxDuration: "5m",
+      gracefulStop: "10s",
     },
   },
   thresholds: {
@@ -69,16 +68,7 @@ export const options = {
 };
 
 // ---------------------------------------------------------------------------
-  Linkora Indexer — Search Load Test Results
-  Total requests : ${totalReqs}
-  Error rate     : ${errorRate}%
-  Avg latency    : ${avg} ms
-  P95 latency    : ${p95} ms  ${p95Status} (target: < 200 ms)
-  P99 latency    : ${p99} ms
-  Results saved to tests/load/results.json
-`;
-}
-// Seed data — representative Stellar-format addresses and IDs
+// Fixed fixture data — representative Stellar-format addresses and IDs
 // ---------------------------------------------------------------------------
 
 // Synthetic Stellar G-addresses used as path parameters.  In a real run these
@@ -227,6 +217,8 @@ const ACTIONS = [
 // ---------------------------------------------------------------------------
 
 export default function () {
+  // Seed each iteration independently so the scheduler cannot change its inputs.
+  randomSeed(FIXTURE_SEED + exec.scenario.iterationInTest);
   // Pick a request type according to the weighted distribution
   const action = ACTIONS[Math.floor(Math.random() * ACTIONS.length)];
   action();
@@ -252,6 +244,18 @@ export function setup() {
 
 export function handleSummary(data) {
   return {
+    "tests/load/results/search-fixtures.json": JSON.stringify({
+      seed: FIXTURE_SEED,
+      datasetSize: ADDRESSES.length + POST_IDS.length + POOL_IDS.length,
+      dataset: { addresses: ADDRESSES.length, postIds: POST_IDS.length, poolIds: POOL_IDS.length },
+      scenario: { name: "search_load", ...options.scenarios.search_load },
+      environment: {
+        baseUrl: BASE_URL,
+        revision: __ENV.GITHUB_SHA || null,
+        runnerOS: __ENV.RUNNER_OS || null,
+        runnerArchitecture: __ENV.RUNNER_ARCH || null,
+      },
+    }, null, 2),
     stdout: JSON.stringify(data, null, 2),
     "tests/load/results/search-summary.json": JSON.stringify(data, null, 2),
   };

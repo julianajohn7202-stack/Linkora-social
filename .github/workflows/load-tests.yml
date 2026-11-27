@@ -108,6 +108,14 @@ jobs:
       - name: Create results directory
         run: mkdir -p tests/load/results
 
+      - name: Record search runner environment
+        run: |
+          {
+            k6 version
+            docker compose version
+            printf 'Revision: %s\nRunner: %s/%s\n' "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH"
+          } > tests/load/results/search-environment.txt
+
       - name: Run search load test
         env:
           BASE_URL: ${{ github.event.inputs.base_url_search || 'http://localhost:3000' }}
