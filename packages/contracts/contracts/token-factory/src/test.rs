@@ -219,3 +219,87 @@ fn test_token_factory_wasm_rotation_across_deployments() {
     assert_eq!(deployed_token_2.deployer, deployer_2);
 }
 
+// ── Issue #623: Stable address-derivation vectors ─────────────────────────────
+
+/// The same (deployer, symbol) pair must produce the same salt on every call.
+/// This is the idempotency property SDK consumers rely on when pre-computing
+/// addresses before a deployment transaction lands.
+#[test]
+fn test_derive_salt_same_pair_is_idempotent() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let deployer = Address::generate(&env);
+    let symbol = String::from_str(&env, "LNKR");
+
+    let salt_a = TokenFactoryContract::derive_salt(&env, &deployer, &symbol);
+    let salt_b = TokenFactoryContract::derive_salt(&env, &deployer, &symbol);
+
+    assert_eq!(
+        salt_a, salt_b,
+        "derive_salt must return the same value for the same (deployer, symbol) pair"
+    );
+}
+
+/// Changing the deployer while keeping the symbol constant must yield a
+/// different salt — two distinct accounts cannot collide on the same symbol.
+#[test]
+fn test_derive_salt_different_deployer_produces_distinct_salt() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let deployer_a = Address::generate(&env);
+    let deployer_b = Address::generate(&env);
+    let symbol = String::from_str(&env, "LNKR");
+
+    let salt_a = TokenFactoryContract::derive_salt(&env, &deployer_a, &symbol);
+    let salt_b = TokenFactoryContract::derive_salt(&env, &deployer_b, &symbol);
+
+    assert_ne!(
+        salt_a, salt_b,
+        "derive_salt must differ when the deployer changes"
+    );
+}
+
+/// Changing the symbol while keeping the deployer constant must yield a
+/// different salt — the same deployer must get distinct addresses per symbol.
+#[test]
+fn test_derive_salt_different_symbol_produces_distinct_salt() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let deployer = Address::generate(&env);
+    let sym_x = String::from_str(&env, "LNKR");
+    let sym_y = String::from_str(&env, "WAVE");
+
+    let salt_x = TokenFactoryContract::derive_salt(&env, &deployer, &sym_x);
+    let salt_y = TokenFactoryContract::derive_salt(&env, &deployer, &sym_y);
+
+    assert_ne!(
+        salt_x, salt_y,
+        "derive_salt must differ when the symbol changes"
+    );
+}
+
+/// Three representative (deployer, symbol) reference vectors all produce
+/// mutually distinct salts — no accidental collision between common tickers.
+#[test]
+fn test_derive_salt_reference_vectors_are_all_distinct() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let deployer1 = Address::generate(&env);
+    let deployer2 = Address::generate(&env);
+    let deployer3 = Address::generate(&env);
+
+    let salt1 =
+        TokenFactoryContract::derive_salt(&env, &deployer1, &String::from_str(&env, "LNKR"));
+    let salt2 =
+        TokenFactoryContract::derive_salt(&env, &deployer2, &String::from_str(&env, "WAVE"));
+    let salt3 =
+        TokenFactoryContract::derive_salt(&env, &deployer3, &String::from_str(&env, "XLM"));
+
+    assert_ne!(salt1, salt2, "reference vector 1 and 2 must not collide");
+    assert_ne!(salt1, salt3, "reference vector 1 and 3 must not collide");
+    assert_ne!(salt2, salt3, "reference vector 2 and 3 must not collide");
+}
