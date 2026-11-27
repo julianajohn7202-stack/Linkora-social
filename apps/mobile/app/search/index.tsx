@@ -4,16 +4,15 @@
  * Full search experience for Linkora mobile.
  *
  * Features:
- *  • Recent searches stored in AsyncStorage, shown when input is empty
+ *  • Recent searches for the active search session, shown when input is empty
  *  • 300ms debounced search results while typing
  *  • Results grouped: Profiles, Posts, Hashtags
  *  • Tapping a result navigates to the correct screen
  *  • Clear button removes all recent searches
  */
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -27,12 +26,10 @@ import { ProfileRow } from "../../components/ProfileRow";
 import { EmptyState } from "../../components/states/EmptyState";
 import { ErrorState } from "../../components/states/ErrorState";
 import { SearchResultSkeletonList } from "../../components/skeletons/SearchResultSkeleton";
-import {
-  useSearch,
-  type HashtagSearchResult,
-  type PostSearchResult,
-  type ProfileSearchResult,
-} from "../../hooks/useSearch";
+import { useSearch } from "../../hooks/useSearch";
+import { useNetworkContext } from "../../context/NetworkContext";
+import { useWallet } from "../../hooks/useWallet";
+import type { ProfileSearchResult } from "../../components/ProfileRow";
 import { useTheme } from "../../theme/useTheme";
 
 // ---------------------------------------------------------------------------
@@ -84,7 +81,7 @@ function HashtagRow({
   hashtag,
   onPress,
 }: {
-  hashtag: HashtagSearchResult;
+  hashtag: { tag: string; postCount: number };
   onPress: (tag: string) => void;
 }) {
   const { theme } = useTheme();
@@ -117,7 +114,7 @@ function PostResultRow({
   post,
   onPress,
 }: {
-  post: PostSearchResult;
+  post: { id: string; author: string; content: string };
   onPress: (id: number | string) => void;
 }) {
   const { theme } = useTheme();
@@ -128,20 +125,19 @@ function PostResultRow({
       style={styles.row}
       onPress={() => onPress(post.id)}
       accessibilityRole="button"
-      accessibilityLabel={`Post by ${post.username}`}
+      accessibilityLabel={`Post by ${post.author}`}
       testID={`post-result-${post.id}`}
     >
       <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{post.username.charAt(0).toUpperCase()}</Text>
+        <Text style={styles.avatarText}>{post.author.charAt(0).toUpperCase()}</Text>
       </View>
       <View style={styles.content}>
         <Text style={styles.username} numberOfLines={1}>
-          {post.username}
+          {post.author}
         </Text>
         <Text style={styles.snippet} numberOfLines={2}>
           {post.content}
         </Text>
-        <Text style={styles.meta}>❤ {post.like_count} · 💰 {post.tip_total.toFixed(1)}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -171,23 +167,43 @@ export default function SearchScreen() {
   const router = useRouter();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
-  const {
-    query,
-    setQuery,
-    debouncedQuery,
-    results,
-    loading,
-    error,
-    recentSearches,
-    addRecentSearch,
-    removeRecentSearch,
-    clearRecentSearches,
-    refresh,
-  } = useSearch();
+  const { network, rpcUrl } = useNetworkContext();
+  const { address } = useWallet();
+  const endpoint =
+    network.id === "MAINNET"
+      ? process.env.EXPO_PUBLIC_MAINNET_SEARCH_URL ?? ""
+      : process.env.EXPO_PUBLIC_TESTNET_SEARCH_URL ?? "http://localhost:3002";
+  const { query, setQuery, results, loading, error, refresh } = useSearch(
+    endpoint,
+    JSON.stringify([network.id, rpcUrl, address])
+  );
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const addRecentSearch = (term: string) => {
+    if (term) setRecentSearches((recent) => [term, ...recent.filter((item) => item !== term)].slice(0, 10));
+  };
+  const removeRecentSearch = (term: string) => {
+    setRecentSearches((recent) => recent.filter((item) => item !== term));
+  };
 
-  const hasQuery = debouncedQuery.trim().length > 0;
-  const hasResults =
-    results.profiles.length > 0 || results.posts.length > 0 || results.hashtags.length > 0;
+  const profiles = results.flatMap((result) =>
+    result.kind === "profile"
+      ? [{
+          address: result.address,
+          username: result.display_name || result.address,
+          bio: result.bio ?? "",
+          creatorToken: "",
+        }]
+      : []
+  );
+  const posts = results.filter((result) => result.kind === "post");
+  const tagCounts = new Map<string, number>();
+  for (const post of posts) {
+    const tags = new Set(post.content.toLowerCase().match(/#[a-z0-9_]+/g));
+    for (const tag of tags) tagCounts.set(tag.slice(1), (tagCounts.get(tag.slice(1)) ?? 0) + 1);
+  }
+  const hashtags = Array.from(tagCounts, ([tag, postCount]) => ({ tag, postCount }));
+  const hasQuery = query.trim().length > 0;
+  const hasResults = results.length > 0;
 
   // ── Navigation handlers ───────────────────────────────────────────────────
 
@@ -205,20 +221,11 @@ export default function SearchScreen() {
 
   const handleHashtagPress = (tag: string) => {
     addRecentSearch(`#${tag}`);
-    // Navigate to explore with the hashtag as query (explore tab handles it)
-    router.push(
-      `/(tabs)/explore` as Parameters<typeof router.push>[0]
-    );
+    setQuery(`#${tag}`);
   };
 
   const handleRecentTap = (term: string) => {
     setQuery(term);
-  };
-
-  const handleSearchSubmit = () => {
-    if (query.trim()) {
-      addRecentSearch(query.trim());
-    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -249,7 +256,7 @@ export default function SearchScreen() {
               <View style={styles.recentHeader}>
                 <Text style={styles.recentTitle}>Recent Searches</Text>
                 <TouchableOpacity
-                  onPress={clearRecentSearches}
+                  onPress={() => setRecentSearches([])}
                   accessibilityRole="button"
                   accessibilityLabel="Clear all recent searches"
                 >
@@ -283,10 +290,10 @@ export default function SearchScreen() {
         ) : (
           // ── Results: grouped sections ────────────────────────────────────
           <>
-            {results.profiles.length > 0 && (
+            {profiles.length > 0 && (
               <View style={styles.section}>
-                <SectionHeader title="Profiles" count={results.profiles.length} />
-                {results.profiles.map((profile) => (
+                <SectionHeader title="Profiles" count={profiles.length} />
+                {profiles.map((profile) => (
                   <ProfileRow
                     key={profile.address}
                     profile={profile}
@@ -296,19 +303,19 @@ export default function SearchScreen() {
               </View>
             )}
 
-            {results.posts.length > 0 && (
+            {posts.length > 0 && (
               <View style={styles.section}>
-                <SectionHeader title="Posts" count={results.posts.length} />
-                {results.posts.map((post) => (
+                <SectionHeader title="Posts" count={posts.length} />
+                {posts.map((post) => (
                   <PostResultRow key={post.id} post={post} onPress={handlePostPress} />
                 ))}
               </View>
             )}
 
-            {results.hashtags.length > 0 && (
+            {hashtags.length > 0 && (
               <View style={styles.section}>
-                <SectionHeader title="Hashtags" count={results.hashtags.length} />
-                {results.hashtags.map((ht) => (
+                <SectionHeader title="Hashtags" count={hashtags.length} />
+                {hashtags.map((ht) => (
                   <HashtagRow key={ht.tag} hashtag={ht} onPress={handleHashtagPress} />
                 ))}
               </View>
