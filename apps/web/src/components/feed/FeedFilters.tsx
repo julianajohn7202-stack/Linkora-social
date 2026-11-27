@@ -92,12 +92,13 @@ const TABS: { id: FeedTab; label: string }[] = [
  * Tab-based filter bar for the Linkora feed.
  *
  * Renders a horizontal list of tab buttons (Explore / Following / Trending). The active
- * tab is highlighted with a violet underline accent. Switching tabs calls
- * `onTabChange` so the parent can update its feed query.
+ * tab is marked with a persistent underline accent and a filled pill badge so the
+ * selected state is recognisable in greyscale. Switching tabs calls `onTabChange`
+ * so the parent can update its feed query.
  *
- * **Accessibility**: each button has an `aria-selected` attribute and the
- * wrapping element uses `role="tablist"` so screen readers announce the
- * current selection correctly.
+ * **Accessibility**: each button carries `aria-selected` and the wrapping element
+ * uses `role="tablist"`. Focus is styled with a visible outline so keyboard users
+ * can always see which control is focused.
  *
  * @param props - {@link FeedFiltersProps}
  *
@@ -121,13 +122,24 @@ export function FeedFilters({ activeTab, onTabChange, className }: FeedFiltersPr
               role="tab"
               aria-selected={isActive}
               onClick={() => onTabChange(id)}
-              className={`pb-3 text-base font-semibold transition-all relative ${
+              className={[
+                "pb-3 text-base font-semibold transition-all relative",
+                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
+                "focus-visible:outline-[var(--foreground)] rounded-sm",
                 isActive
                   ? "text-[var(--foreground)]"
-                  : "text-[var(--text-muted)] hover:text-[var(--foreground)]"
-              }`}
+                  : "text-[var(--text-muted)] hover:text-[var(--foreground)]",
+              ].join(" ")}
             >
+              {/* Shape affordance: filled dot preceding the label on the active tab */}
+              {isActive && (
+                <span
+                  aria-hidden="true"
+                  className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[var(--foreground)] align-middle"
+                />
+              )}
               {label}
+              {/* Persistent underline so the selected state is visible without colour */}
               {isActive && (
                 <span
                   aria-hidden="true"
