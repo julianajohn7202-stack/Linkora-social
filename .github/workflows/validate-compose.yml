@@ -1,0 +1,116 @@
+# Validates all supported Docker Compose variants by rendering their
+# resolved configuration with placeholder values.  Any syntax error or
+# unresolved required variable causes the job to fail and names the
+# offending variant in the step title.
+#
+# Variants checked:
+#   local   — docker-compose.yml only  (the default developer stack)
+#   staging — docker-compose.yml + docker-compose.staging.yml
+
+name: Validate Compose Variants
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docker-compose*.yml"
+      - ".github/workflows/validate-compose.yml"
+  pull_request:
+    paths:
+      - "docker-compose*.yml"
+      - ".github/workflows/validate-compose.yml"
+  workflow_dispatch:
+
+jobs:
+  validate-compose:
+    name: Validate Compose variants
+    runs-on: ubuntu-latest
+
+    # Placeholder values for every variable referenced in the Compose files.
+    # docker compose config fails on unresolved variables that have no default,
+    # so all variables that appear without a :- fallback must be listed here.
+    env:
+      POSTGRES_USER: placeholder
+      POSTGRES_PASSWORD: placeholder
+      POSTGRES_DB: placeholder
+      REDIS_URL: redis://redis:6379
+      STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+      CONTRACT_ID: placeholder
+      START_LEDGER: "0"
+      # analytics-oracle reads the key from a file; supply a dummy path so
+      # the variable reference in SECRETS resolves without an actual file.
+      ORACLE_KEY_FILE: /dev/null
+      ADMIN_SECRET: placeholder
+      ORACLE_NAME: placeholder
+      WINDOW_LEDGERS: "1000"
+      NOTIFICATION_PORT: "3002"
+      SEARCH_PORT: "3004"
+      SEARCH_HOST: "0.0.0.0"
+      MEDIA_PORT: "3003"
+      MEDIA_HOST: "0.0.0.0"
+      MEDIA_BUCKET: placeholder
+      MEDIA_ENDPOINT: placeholder
+      MEDIA_ACCESS_KEY: placeholder
+      MEDIA_SECRET_KEY: placeholder
+      CDN_BASE_URL: http://localhost:3003
+      CDN_SIGNING_SECRET: placeholder
+      LOG_LEVEL: info
+      # staging-only variables
+      STAGING_STORAGE_BUCKET: placeholder
+      STORAGE_REGION: us-east-1
+      NODE_ENV: staging
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Variant: local ────────────────────────────────────────────────────
+      - name: "Render variant: local (docker-compose.yml)"
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          echo "✓ local variant rendered successfully"
+
+      # ── Variant: staging ──────────────────────────────────────────────────
+      - name: "Render variant: staging (docker-compose.yml + docker-compose.staging.yml)"
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.staging.yml \
+            config --quiet
+          echo "✓ staging variant rendered successfully"
+
+      # ── Negative test: invalid override must fail ─────────────────────────
+      # Writes a deliberately broken Compose fragment and asserts that
+      # docker compose config rejects it.  If the check silently passes an
+      # invalid file the step exits with code 1 and fails the job.
+      - name: "Negative test: invalid override causes a failing check"
+        run: |
+          cat > /tmp/invalid-override.yml <<'EOF'
+          version: "3.9"
+          services:
+            postgres:
+              image: [this is not valid YAML because it is an unclosed bracket
+          EOF
+
+          if docker compose \
+              -f docker-compose.yml \
+              -f /tmp/invalid-override.yml \
+              config --quiet 2>/dev/null; then
+            echo "ERROR: docker compose accepted an intentionally invalid override — the validation check is not working"
+            exit 1
+          else
+            echo "✓ invalid override correctly rejected (variant: invalid-override)"
+          fi
+
+      # ── Summary ───────────────────────────────────────────────────────────
+      - name: Report validated variants
+        if: success()
+        run: |
+          echo "## Compose variant validation passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Variant | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ------- | ------ |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| local | ✅ rendered |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| staging | ✅ rendered |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| invalid-override (negative test) | ✅ rejected |" >> "$GITHUB_STEP_SUMMARY"
